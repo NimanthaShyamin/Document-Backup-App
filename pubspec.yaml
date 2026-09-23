@@ -1,0 +1,57 @@
+name: vehicle_document_vault
+description: "Enterprise-grade, modular, offline-first personal vehicle document repository with silent Google Drive AppData synchronization."
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.2.0 <4.0.0"
+  flutter: ">=3.16.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State Management & Dependency Injection
+  flutter_riverpod: ^2.5.1
+  riverpod_annotation: ^2.3.5
+
+  # Local Relational Database (SQLite)
+  drift: ^2.16.0
+  drift_flutter: ^0.1.0
+  sqlite3_flutter_libs: ^0.5.20
+
+  # File Storage & Cryptography
+  path_provider: ^2.1.2
+  path: ^1.9.0
+  crypto: ^3.0.3
+  uuid: ^4.3.3
+
+  # Remote Google Drive AppData Sync
+  google_sign_in: ^6.2.1
+  googleapis: ^13.1.0
+  http: ^1.2.1
+
+  # Network Status & Background Worker
+  connectivity_plus: ^6.0.3
+  workmanager: ^0.5.2
+
+  # Hardware Controls (Screen Luminance & Alerts)
+  screen_brightness: ^2.0.0
+  flutter_local_notifications: ^17.1.0
+  timezone: ^0.9.2
+
+  # Document Rendering (Native PDF, Vector QR, Raster Images)
+  pdfx: ^2.6.0
+  qr_flutter: ^4.1.0
+  intl: ^0.19.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+  drift_dev: ^2.16.0
+  build_runner: ^2.4.8
+  riverpod_generator: ^2.4.0
+
+flutter:
+  uses-material-design: true
