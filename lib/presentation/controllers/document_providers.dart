@@ -1,9 +1,11 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import '../../core/hardware/notification_engine.dart';
 import '../../core/storage/file_storage_manager.dart';
 import '../../data/datasources/local/app_database.dart';
-import '../../data/datasources/remote/drive_app_data_service.dart';
-import '../../data/repositories/sync_queue_repository_impl.dart';
+import '../../data/datasources/remote/drive_sync_service.dart';
+import '../../data/datasources/remote/google_auth_service.dart';
+import '../../data/repositories/sync_repository.dart';
 import '../../data/repositories/vehicle_document_repository_impl.dart';
 import '../../domain/entities/sync_status.dart';
 import '../../domain/entities/vehicle_document.dart';
@@ -21,22 +23,39 @@ final fileStorageManagerProvider = Provider<FileStorageManager>((ref) {
   return FileStorageManager();
 });
 
-final driveAppDataServiceProvider = Provider<DriveAppDataService>((ref) {
-  return DriveAppDataService();
-});
-
 final notificationEngineProvider = Provider<LocalNotificationEngine>((ref) {
   return LocalNotificationEngine.instance;
 });
 
+// Authentication & Drive Cloud Services
+final googleAuthServiceProvider = Provider<GoogleAuthService>((ref) {
+  return GoogleAuthService();
+});
+
+final googleAuthStateProvider = StreamProvider<GoogleSignInAccount?>((ref) async* {
+  final authService = ref.watch(googleAuthServiceProvider);
+  yield authService.currentUser;
+  yield* authService.onCurrentUserChanged;
+});
+
+final driveSyncServiceProvider = Provider<DriveSyncService>((ref) {
+  final authService = ref.watch(googleAuthServiceProvider);
+  return DriveSyncService(authService: authService);
+});
+
 // Repositories
-final syncQueueRepositoryProvider = Provider<ISyncQueueRepository>((ref) {
-  final repo = SyncQueueRepository(
+final syncRepositoryProvider = Provider<SyncRepository>((ref) {
+  final repo = SyncRepository(
     db: ref.watch(appDatabaseProvider),
-    driveService: ref.watch(driveAppDataServiceProvider),
+    driveService: ref.watch(driveSyncServiceProvider),
     storageManager: ref.watch(fileStorageManagerProvider),
   );
+  ref.onDispose(() => repo.dispose());
   return repo;
+});
+
+final syncQueueRepositoryProvider = Provider<ISyncQueueRepository>((ref) {
+  return ref.watch(syncRepositoryProvider);
 });
 
 final vehicleDocumentRepositoryProvider = Provider<IVehicleDocumentRepository>((ref) {
@@ -59,3 +78,4 @@ final syncEngineStateProvider = StreamProvider<SyncEngineState>((ref) {
   final syncQueue = ref.watch(syncQueueRepositoryProvider);
   return syncQueue.syncStateStream;
 });
+

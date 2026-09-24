@@ -46,10 +46,7 @@ class AppDatabase extends _$AppDatabase {
 
   static QueryExecutor _openConnection() {
     return driftDatabase(
-      name: 'vehicle_documents_vault.db',
-      native: const DriftNativeOptions(
-        shareAcrossIsolates: true,
-      ),
+      name: 'vehicle_documents_vault',
     );
   }
 

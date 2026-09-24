@@ -22,8 +22,10 @@ class DocumentViewerScreen extends StatefulWidget {
 }
 
 class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
-  final BrightnessControllerService _brightnessService = BrightnessControllerService.instance;
-  final TransformationController _transformationController = TransformationController();
+  final BrightnessControllerService _brightnessService =
+      BrightnessControllerService.instance;
+  final TransformationController _transformationController =
+      TransformationController();
 
   PdfControllerPinch? _pdfController;
   int _currentPdfPage = 1;
@@ -61,7 +63,8 @@ class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
     try {
       final file = File(widget.document.localFilePath);
       if (!await file.exists()) {
-        throw FileSystemException('PDF file does not exist in sandboxed storage', file.path);
+        throw FileSystemException(
+            'PDF file does not exist in sandboxed storage', file.path);
       }
 
       final doc = await PdfDocument.openFile(file.path);
@@ -113,7 +116,7 @@ class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
       appBar: _isFullScreen
           ? null
           : AppBar(
-              backgroundColor: Colors.black.withOpacity(0.85),
+              backgroundColor: Colors.black.withValues(alpha: 0.85),
               elevation: 0,
               iconTheme: const IconThemeData(color: Colors.white),
               title: Column(
@@ -133,7 +136,7 @@ class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
                     '${widget.document.vehicleRegNo} • ${_formatDocType(widget.document.documentType)}',
                     style: TextStyle(
                       fontSize: 12,
-                      color: Colors.white.withOpacity(0.7),
+                      color: Colors.white.withValues(alpha: 0.7),
                     ),
                   ),
                 ],
@@ -206,7 +209,7 @@ class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
         borderRadius: BorderRadius.circular(24.0),
         boxShadow: [
           BoxShadow(
-            color: Colors.white.withOpacity(0.15),
+            color: Colors.white.withValues(alpha: 0.15),
             blurRadius: 40,
             spreadRadius: 10,
           ),
@@ -338,9 +341,10 @@ class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
         decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.7),
+          color: Colors.black.withValues(alpha: 0.7),
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.amber.withOpacity(0.6), width: 1),
+          border:
+              Border.all(color: Colors.amber.withValues(alpha: 0.6), width: 1),
         ),
         child: const Row(
           mainAxisSize: MainAxisSize.min,
@@ -365,7 +369,7 @@ class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.75),
+        color: Colors.black.withValues(alpha: 0.75),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Colors.white24),
       ),
@@ -388,7 +392,7 @@ class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
       margin: const EdgeInsets.all(16),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF1E1E24).withOpacity(0.95),
+        color: const Color(0xFF1E1E24).withValues(alpha: 0.95),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: Colors.white12),
         boxShadow: const [
@@ -422,7 +426,8 @@ class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
           if (widget.document.policyNo != null)
             Text(
               'Ref/Policy: ${widget.document.policyNo}',
-              style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 13),
+              style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.8), fontSize: 13),
             ),
           const SizedBox(height: 6),
           Row(
@@ -445,7 +450,7 @@ class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
               Text(
                 'SHA-256: ${widget.document.fileChecksumSha256.substring(0, 8)}...',
                 style: TextStyle(
-                  color: Colors.white.withOpacity(0.4),
+                  color: Colors.white.withValues(alpha: 0.4),
                   fontSize: 11,
                   fontFamily: 'monospace',
                 ),
@@ -462,12 +467,15 @@ class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         decoration: BoxDecoration(
-          color: Colors.blue.withOpacity(0.2),
+          color: Colors.blue.withValues(alpha: 0.2),
           borderRadius: BorderRadius.circular(8),
         ),
         child: const Text(
           'NO EXPIRY',
-          style: TextStyle(color: Colors.blueAccent, fontSize: 10, fontWeight: FontWeight.bold),
+          style: TextStyle(
+              color: Colors.blueAccent,
+              fontSize: 10,
+              fontWeight: FontWeight.bold),
         ),
       );
     }
@@ -480,13 +488,14 @@ class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.15),
+        color: color.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withOpacity(0.4)),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
       ),
       child: Text(
         text,
-        style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold),
+        style:
+            TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold),
       ),
     );
   }

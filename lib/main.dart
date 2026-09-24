@@ -6,8 +6,9 @@ import 'package:workmanager/workmanager.dart';
 import 'core/hardware/notification_engine.dart';
 import 'core/storage/file_storage_manager.dart';
 import 'data/datasources/local/app_database.dart';
-import 'data/datasources/remote/drive_app_data_service.dart';
-import 'data/repositories/sync_queue_repository_impl.dart';
+import 'data/datasources/remote/drive_sync_service.dart';
+import 'data/datasources/remote/google_auth_service.dart';
+import 'data/repositories/sync_repository.dart';
 import 'presentation/screens/document_list_screen.dart';
 
 const String backgroundSyncTaskKey = 'com.vehicledocs.syncTask';
@@ -21,11 +22,16 @@ void callbackDispatcher() {
     if (task == backgroundSyncTaskKey) {
       final db = AppDatabase();
       final storage = FileStorageManager();
-      final drive = DriveAppDataService();
-      final syncRepo = SyncQueueRepository(db: db, driveService: drive, storageManager: storage);
+      final auth = GoogleAuthService();
+
+      // Perform silent sign-in in background worker isolate
+      await auth.signInSilently();
+      final drive = DriveSyncService(authService: auth);
+      final syncRepo =
+          SyncRepository(db: db, driveService: drive, storageManager: storage);
 
       try {
-        await syncRepo.reconcileStartupDelta();
+        await syncRepo.reconcile();
         await db.close();
         return true;
       } catch (e, stack) {
@@ -96,7 +102,6 @@ class VehicleDocumentVaultApp extends StatelessWidget {
           primary: Colors.amberAccent,
           secondary: Colors.amber,
           surface: Color(0xFF1E1E24),
-          background: Color(0xFF121214),
         ),
         appBarTheme: const AppBarTheme(
           backgroundColor: Color(0xFF1A1A1E),

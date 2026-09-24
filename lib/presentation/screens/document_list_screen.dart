@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../domain/entities/sync_status.dart';
 import '../../domain/entities/vehicle_document.dart';
 import '../controllers/document_providers.dart';
+import '../widgets/cloud_sync_settings_card.dart';
 import 'document_viewer_screen.dart';
 
 /// Offline-first Document Catalog displaying instantly from SQLite WAL storage.
@@ -17,10 +18,48 @@ class _DocumentListScreenState extends ConsumerState<DocumentListScreen> {
   @override
   void initState() {
     super.initState();
-    // Non-blocking background reconciliation on startup
+    // Non-blocking background reconciliation and silent auth on startup
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(googleAuthServiceProvider).signInSilently();
       ref.read(syncQueueRepositoryProvider).reconcileStartupDelta();
     });
+  }
+
+  void _showCloudSyncModal(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.85,
+        minChildSize: 0.5,
+        maxChildSize: 0.95,
+        builder: (_, scrollController) => Container(
+          decoration: const BoxDecoration(
+            color: Color(0xFF16161A),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: SingleChildScrollView(
+            controller: scrollController,
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              children: [
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const CloudSyncSettingsCard(),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -44,6 +83,11 @@ class _DocumentListScreenState extends ConsumerState<DocumentListScreen> {
           ],
         ),
         actions: [
+          IconButton(
+            tooltip: 'Google Drive Sync',
+            icon: const Icon(Icons.cloud_sync, color: Colors.amberAccent),
+            onPressed: () => _showCloudSyncModal(context),
+          ),
           IconButton(
             tooltip: 'Force Cloud Reconciliation',
             icon: const Icon(Icons.sync, color: Colors.white70),
@@ -275,26 +319,25 @@ class _DocumentListScreenState extends ConsumerState<DocumentListScreen> {
   }
 
   Widget _buildEmptyState() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.folder_open, size: 64, color: Colors.white.withOpacity(0.3)),
-            const SizedBox(height: 16),
-            const Text(
-              'No Vehicle Documents Found',
-              style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Documents stored locally or synced via Google Drive AppData will appear here instantly.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 13),
-            ),
-          ],
-        ),
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 24.0),
+      child: Column(
+        children: [
+          Icon(Icons.folder_open, size: 56, color: Colors.white.withOpacity(0.3)),
+          const SizedBox(height: 12),
+          const Text(
+            'No Vehicle Documents Found',
+            style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Documents stored locally or synced via Google Drive AppData will appear here instantly.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 13),
+          ),
+          const SizedBox(height: 24),
+          const CloudSyncSettingsCard(),
+        ],
       ),
     );
   }
