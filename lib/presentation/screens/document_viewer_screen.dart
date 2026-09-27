@@ -1,15 +1,17 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../../core/hardware/brightness_controller.dart';
 import '../../domain/entities/document_type.dart';
 import '../../domain/entities/vehicle_document.dart';
+import '../utils/document_action_helper.dart';
 
 /// Enterprise-grade universal document viewer with automated screen luminance elevation.
 /// Supports multi-page PDFs, rasterized certificates (PNG/JPG/WEBP), and vector QR codes.
-class DocumentViewerScreen extends StatefulWidget {
+class DocumentViewerScreen extends ConsumerStatefulWidget {
   final VehicleDocument document;
 
   const DocumentViewerScreen({
@@ -18,10 +20,10 @@ class DocumentViewerScreen extends StatefulWidget {
   });
 
   @override
-  State<DocumentViewerScreen> createState() => _DocumentViewerScreenState();
+  ConsumerState<DocumentViewerScreen> createState() => _DocumentViewerScreenState();
 }
 
-class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
+class _DocumentViewerScreenState extends ConsumerState<DocumentViewerScreen> {
   final BrightnessControllerService _brightnessService =
       BrightnessControllerService.instance;
   final TransformationController _transformationController =
@@ -151,6 +153,20 @@ class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
                   tooltip: 'Full Screen',
                   icon: const Icon(Icons.fullscreen, color: Colors.white),
                   onPressed: _toggleFullScreen,
+                ),
+                IconButton(
+                  tooltip: 'Delete Document',
+                  icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                  onPressed: () async {
+                    final deleted = await DocumentActionHelper.confirmAndDeleteDocument(
+                      context: context,
+                      ref: ref,
+                      document: widget.document,
+                    );
+                    if (deleted && context.mounted) {
+                      Navigator.of(context).pop();
+                    }
+                  },
                 ),
               ],
             ),

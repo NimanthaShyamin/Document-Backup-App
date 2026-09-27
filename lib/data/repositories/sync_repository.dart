@@ -321,8 +321,9 @@ class SyncRepository implements ISyncQueueRepository {
         ),
       );
 
-      // Clean up queue task
+      // Clean up queue task and probe document from local vehicle documents
       await (_db.delete(_db.syncQueue)..where((t) => t.documentId.equals(verificationId))).go();
+      await (_db.delete(_db.vehicleDocuments)..where((t) => t.id.equals(verificationId))).go();
 
       developer.log('[SyncRepository] E2E verification probe succeeded. Remote Drive File ID: $driveFileId');
 
@@ -336,12 +337,9 @@ class SyncRepository implements ISyncQueueRepository {
       );
     } catch (e, stack) {
       developer.log('[SyncRepository] E2E verification probe failed', error: e, stackTrace: stack);
-      // Mark as sync_failed in SQLite
-      await (_db.update(_db.vehicleDocuments)..where((t) => t.id.equals(verificationId))).write(
-        const VehicleDocumentsCompanion(
-          syncStatus: Value('sync_failed'),
-        ),
-      );
+      // Clean up probe record from vehicleDocuments and syncQueue upon failure
+      await (_db.delete(_db.vehicleDocuments)..where((t) => t.id.equals(verificationId))).go();
+      await (_db.delete(_db.syncQueue)..where((t) => t.documentId.equals(verificationId))).go();
 
       return VerificationProbeResult(
         documentId: verificationId,

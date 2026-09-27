@@ -1,9 +1,12 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import '../../core/hardware/biometric_auth_service.dart';
 import '../../core/hardware/notification_engine.dart';
 import '../../core/storage/file_storage_manager.dart';
+import '../../core/theme/app_preferences_provider.dart';
 import '../../data/datasources/local/app_database.dart';
 import '../../data/datasources/remote/drive_sync_service.dart';
+import '../../data/datasources/remote/gemini_document_extraction_service.dart';
 import '../../data/datasources/remote/google_auth_service.dart';
 import '../../data/repositories/sync_repository.dart';
 import '../../data/repositories/vehicle_document_repository_impl.dart';
@@ -77,5 +80,16 @@ final vehicleDocumentsStreamProvider = StreamProvider<List<VehicleDocument>>((re
 final syncEngineStateProvider = StreamProvider<SyncEngineState>((ref) {
   final syncQueue = ref.watch(syncQueueRepositoryProvider);
   return syncQueue.syncStateStream;
+});
+
+// Hardware Security & Biometrics
+final biometricAuthServiceProvider = Provider<BiometricAuthService>((ref) {
+  return BiometricAuthService();
+});
+
+// Gemini AI Document Extraction Service
+final geminiDocumentExtractionServiceProvider = Provider<GeminiDocumentExtractionService>((ref) {
+  final apiKey = ref.watch(geminiApiKeyProvider);
+  return GeminiDocumentExtractionService(apiKey: apiKey);
 });
 

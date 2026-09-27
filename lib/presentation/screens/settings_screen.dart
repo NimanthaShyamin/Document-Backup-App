@@ -19,6 +19,8 @@ class SettingsScreen extends ConsumerWidget {
     final themeMode = ref.watch(themeModeProvider);
     final language = ref.watch(appLanguageProvider);
     final isCategorized = ref.watch(categorizedViewProvider);
+    final isBiometricRequired = ref.watch(biometricDeleteRequiredProvider);
+    final geminiApiKey = ref.watch(geminiApiKeyProvider);
     final userAsync = ref.watch(googleAuthStateProvider);
     final user = userAsync.value;
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -57,22 +59,32 @@ class SettingsScreen extends ConsumerWidget {
 
             const SizedBox(height: 16),
 
-            // 4. Categorized Documents Toggle Card
+            // 4. Biometric Document Deletion Protection Toggle Card (Default: ON)
+            _buildBiometricDeleteToggleCard(context, ref, isBiometricRequired, isLiquidGlass, language, isDark),
+
+            const SizedBox(height: 16),
+
+            // 5. Gemini AI Document Scanner & Auto-Fill Card
+            _buildGeminiApiKeyCard(context, ref, geminiApiKey, isLiquidGlass, language, isDark),
+
+            const SizedBox(height: 16),
+
+            // 6. Categorized Documents Toggle Card
             _buildCategorizedToggleCard(context, ref, isCategorized, isLiquidGlass, language, isDark),
 
             const SizedBox(height: 16),
 
-            // 5. Apple Liquid Glass Mode Toggle Card
+            // 7. Apple Liquid Glass Mode Toggle Card
             _buildLiquidGlassToggleCard(context, ref, isLiquidGlass, language, isDark),
 
             const SizedBox(height: 16),
 
-            // 6. Cloud Backup & Sync Expandable Card
+            // 8. Cloud Backup & Sync Expandable Card
             _buildCloudSyncAccordion(context, ref, isLiquidGlass, language, isDark),
 
             const SizedBox(height: 24),
 
-            // 7. Logout Button / Sign-in Action
+            // 9. Logout Button / Sign-in Action
             _buildLogoutSection(context, ref, user, isLiquidGlass, language, isDark),
 
             const SizedBox(height: 110), // Padding for floating navigation dock
@@ -493,7 +505,274 @@ class SettingsScreen extends ConsumerWidget {
     );
   }
 
-  // --- 4. Categorized View Toggle Card ---
+  // --- 4. Biometric Document Deletion Protection Toggle Card (Default: ON) ---
+  Widget _buildBiometricDeleteToggleCard(
+    BuildContext context,
+    WidgetRef ref,
+    bool isBiometricRequired,
+    bool isLiquidGlass,
+    AppLanguage language,
+    bool isDark,
+  ) {
+    return LiquidGlassCard(
+      isLiquidGlass: isLiquidGlass,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: isBiometricRequired
+                  ? Colors.redAccent.withValues(alpha: 0.15)
+                  : Colors.grey.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(
+              Icons.fingerprint,
+              color: isBiometricRequired ? Colors.redAccent : Colors.grey,
+              size: 22,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: [
+                    Text(
+                      AppStrings.get('biometric_delete', language),
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                        color: isDark ? Colors.white : const Color(0xFF0F172A),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.green.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Text(
+                        'DEFAULT ON',
+                        style: TextStyle(
+                          color: Colors.greenAccent,
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  AppStrings.get('biometric_delete_sub', language),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: isDark ? Colors.white60 : const Color(0xFF64748B),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Switch.adaptive(
+            value: isBiometricRequired,
+            activeTrackColor: Colors.redAccent.withValues(alpha: 0.6),
+            activeThumbColor: Colors.redAccent,
+            onChanged: (val) {
+              ref.read(biometricDeleteRequiredProvider.notifier).set(val);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  // --- 5. Gemini AI Document Scanner & Auto-Fill Card ---
+  Widget _buildGeminiApiKeyCard(
+    BuildContext context,
+    WidgetRef ref,
+    String apiKey,
+    bool isLiquidGlass,
+    AppLanguage language,
+    bool isDark,
+  ) {
+    final isConfigured = apiKey.trim().isNotEmpty;
+    final maskedKey = isConfigured
+        ? (apiKey.length > 8
+            ? '${apiKey.substring(0, 4)}••••${apiKey.substring(apiKey.length - 4)}'
+            : '••••••••')
+        : 'Not Configured (Tap to setup)';
+
+    return LiquidGlassCard(
+      isLiquidGlass: isLiquidGlass,
+      padding: const EdgeInsets.all(16),
+      onTap: () => _showGeminiApiKeyDialog(context, ref, apiKey, isDark),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF00E5FF), Color(0xFF2979FF)],
+              ),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(
+              Icons.auto_awesome,
+              color: Colors.white,
+              size: 22,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: [
+                    Text(
+                      AppStrings.get('gemini_api_title', language),
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                        color: isDark ? Colors.white : const Color(0xFF0F172A),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: isConfigured
+                            ? Colors.green.withValues(alpha: 0.15)
+                            : Colors.amber.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        isConfigured ? 'ACTIVE' : 'OPTIONAL',
+                        style: TextStyle(
+                          color: isConfigured ? Colors.greenAccent : Colors.amberAccent,
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  AppStrings.get('gemini_api_sub', language),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: isDark ? Colors.white60 : const Color(0xFF64748B),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Key: $maskedKey',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontFamily: 'monospace',
+                    color: isConfigured ? Colors.cyanAccent : Colors.amberAccent,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          const Icon(Icons.edit_outlined, size: 20, color: Colors.white38),
+        ],
+      ),
+    );
+  }
+
+  void _showGeminiApiKeyDialog(
+    BuildContext context,
+    WidgetRef ref,
+    String currentKey,
+    bool isDark,
+  ) {
+    final controller = TextEditingController(text: currentKey);
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E24),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.auto_awesome, color: Color(0xFF00E5FF), size: 22),
+            SizedBox(width: 10),
+            Text(
+              'Gemini API Key',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 17),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Enter your Google Gemini API key to enable AI-powered automatic document detail extraction when importing vehicle documents.',
+              style: TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: controller,
+              style: const TextStyle(color: Colors.white, fontSize: 13, fontFamily: 'monospace'),
+              decoration: InputDecoration(
+                labelText: 'API Key (AIzaSy...)',
+                labelStyle: const TextStyle(color: Colors.white60),
+                filled: true,
+                fillColor: const Color(0xFF26262E),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.clear, color: Colors.white38, size: 18),
+                  onPressed: () => controller.clear(),
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel', style: TextStyle(color: Colors.white60)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF00E5FF),
+              foregroundColor: Colors.black87,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () {
+              ref.read(geminiApiKeyProvider.notifier).setKey(controller.text.trim());
+              Navigator.of(ctx).pop();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Gemini API key updated successfully.'),
+                  backgroundColor: Color(0xFF1E293B),
+                ),
+              );
+            },
+            child: const Text('Save Key', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // --- 6. Categorized View Toggle Card ---
   Widget _buildCategorizedToggleCard(
     BuildContext context,
     WidgetRef ref,

@@ -1,8 +1,8 @@
 package com.example.vehicledocumentvault
 
-import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.android.RenderMode
 
-class MainActivity : FlutterActivity() {
+class MainActivity : FlutterFragmentActivity() {
     override fun getRenderMode(): RenderMode = RenderMode.texture
 }

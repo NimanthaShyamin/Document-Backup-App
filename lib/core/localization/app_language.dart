@@ -140,6 +140,30 @@ class AppStrings {
       AppLanguage.singlish: 'ඉන්ෂුවරන්ස්, රෙවනිව් ලයිසන් සහ කියුආර් වෙන වෙනම පෙන්නන්න',
     },
 
+    // Security & Biometrics
+    'biometric_delete': {
+      AppLanguage.english: 'Biometric Deletion Protection',
+      AppLanguage.sinhala: 'ජෛවමිතික මඟින් ලේඛන මැකීමේ ආරක්ෂාව',
+      AppLanguage.singlish: 'බයෝමෙට්‍රික් ඩිලීට් ප්‍රොටෙක්ෂන්',
+    },
+    'biometric_delete_sub': {
+      AppLanguage.english: 'Require fingerprint, Face ID, or passcode before deleting documents (Default ON)',
+      AppLanguage.sinhala: 'ලේඛන මැකීමට පෙර ඇඟිලි සලකුණ හෝ මුරපදය තහවුරු කිරීම (පෙරනිමියෙන් සක්‍රියයි)',
+      AppLanguage.singlish: 'ඩොකියුමන්ට් ඩිලීට් කරන්න කලින් ෆින්ගර්ප්‍රින්ට් එක හරි පාස්වර්ඩ් එක හරි ඉල්ලන්න (ඩිෆෝල්ට් ඔන්)',
+    },
+
+    // Gemini AI Auto-Fill
+    'gemini_api_title': {
+      AppLanguage.english: 'Gemini AI Document Scanner',
+      AppLanguage.sinhala: 'Gemini AI ලේඛන ස්කෑනරය',
+      AppLanguage.singlish: 'ජෙමිනයි AI ඩොකියුමන්ට් ස්කෑනර්',
+    },
+    'gemini_api_sub': {
+      AppLanguage.english: 'Auto-fill vehicle details using Gemini Vision model',
+      AppLanguage.sinhala: 'Gemini Vision ආකෘතිය භාවිතයෙන් වාහන විස්තර ස්වයංක්‍රීයව පිරවීම',
+      AppLanguage.singlish: 'ජෙමිනයි විෂන් මොඩල් එකෙන් ඩොකියුමන්ට් විස්තර ඔටෝ ෆිල් කරන්න',
+    },
+
     // Cloud & Logout
     'cloud_sync_title': {
       AppLanguage.english: 'Google Drive Vault Sync',

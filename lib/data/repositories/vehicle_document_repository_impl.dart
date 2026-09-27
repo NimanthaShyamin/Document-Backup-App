@@ -26,22 +26,38 @@ class VehicleDocumentRepositoryImpl implements IVehicleDocumentRepository {
   })  : _db = db,
         _storageManager = storageManager,
         _syncQueue = syncQueue,
-        _notificationEngine = notificationEngine ?? LocalNotificationEngine.instance;
+    _notificationEngine = notificationEngine ?? LocalNotificationEngine.instance {
+    _purgeLegacyProbeRecords();
+  }
+
+  void _purgeLegacyProbeRecords() {
+    (_db.delete(_db.vehicleDocuments)
+          ..where((t) => t.vehicleRegNo.equals('VERIFY-E2E')))
+        .go()
+        .catchError((_) => 0);
+  }
 
   @override
   Stream<List<VehicleDocument>> watchAllDocuments() {
     return (_db.select(_db.vehicleDocuments)
+          ..where((t) => t.vehicleRegNo.isNotValue('VERIFY-E2E'))
           ..orderBy([
             (t) => OrderingTerm(expression: t.createdAt, mode: OrderingMode.desc),
           ]))
         .watch()
-        .map((rows) => rows.map(_mapToDomain).toList());
+        .map((rows) => rows
+            .where((r) =>
+                !r.vehicleRegNo.startsWith('VERIFY-') &&
+                !r.title.toLowerCase().contains('probe'))
+            .map(_mapToDomain)
+            .toList());
   }
 
   @override
   Future<VehicleDocument?> getDocumentById(String id) async {
     final row = await (_db.select(_db.vehicleDocuments)..where((t) => t.id.equals(id))).getSingleOrNull();
-    return row != null ? _mapToDomain(row) : null;
+    if (row == null || row.vehicleRegNo.startsWith('VERIFY-')) return null;
+    return _mapToDomain(row);
   }
 
   @override

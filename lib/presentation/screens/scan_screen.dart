@@ -22,10 +22,10 @@ class ScanScreen extends ConsumerStatefulWidget {
 class _ScanScreenState extends ConsumerState<ScanScreen>
     with SingleTickerProviderStateMixin {
   DocumentType _selectedType = DocumentType.fuelQr;
-  final TextEditingController _regNoController = TextEditingController(text: 'WP CAB-7890');
-  final TextEditingController _titleController = TextEditingController(text: 'National Fuel Pass QR');
-  final TextEditingController _policyNoController = TextEditingController(text: 'NFP-2026-8891');
-  DateTime _selectedExpiry = DateTime.now().add(const Duration(days: 180));
+  final TextEditingController _regNoController = TextEditingController();
+  final TextEditingController _titleController = TextEditingController();
+  final TextEditingController _policyNoController = TextEditingController();
+  DateTime? _selectedExpiry;
   bool _isSaving = false;
 
   late AnimationController _laserController;
@@ -56,28 +56,6 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
   void _onCategoryChanged(DocumentType type) {
     setState(() {
       _selectedType = type;
-      switch (type) {
-        case DocumentType.fuelQr:
-          _titleController.text = 'National Fuel Pass QR';
-          _policyNoController.text = 'NFP-2026-8891';
-          _selectedExpiry = DateTime.now().add(const Duration(days: 365));
-          break;
-        case DocumentType.insuranceCard:
-          _titleController.text = 'Comprehensive Motor Insurance';
-          _policyNoController.text = 'SLIC-POL-99214';
-          _selectedExpiry = DateTime.now().add(const Duration(days: 90));
-          break;
-        case DocumentType.revenueLicense:
-          _titleController.text = 'Vehicle Revenue License 2026';
-          _policyNoController.text = 'RL-WP-2026-0428';
-          _selectedExpiry = DateTime.now().add(const Duration(days: 30));
-          break;
-        case DocumentType.custom:
-          _titleController.text = 'Emission Test Certificate';
-          _policyNoController.text = 'DRV-ETC-1029';
-          _selectedExpiry = DateTime.now().add(const Duration(days: 120));
-          break;
-      }
     });
   }
 
@@ -106,7 +84,7 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
         'Title: $title\n'
         'Category: ${_selectedType.label}\n'
         'Ref/Policy: ${_policyNoController.text.trim()}\n'
-        'Expiry Date: ${DateFormat.yMMMd().format(_selectedExpiry)}\n'
+        'Expiry Date: ${_selectedExpiry != null ? DateFormat.yMMMd().format(_selectedExpiry!) : "None"}\n'
         'Digitized At: ${DateTime.now().toIso8601String()}\n'
         'SHA256 Sandbox Protected.\n',
       );
@@ -357,28 +335,43 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        '${AppStrings.get('expiry_date', language)}: ${DateFormat.yMMMd().format(_selectedExpiry)}',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: isDark ? Colors.white70 : const Color(0xFF475569),
+                      Expanded(
+                        child: Text(
+                          _selectedExpiry != null
+                              ? '${AppStrings.get('expiry_date', language)}: ${DateFormat.yMMMd().format(_selectedExpiry!)}'
+                              : '${AppStrings.get('expiry_date', language)}: No Expiration',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: isDark ? Colors.white70 : const Color(0xFF475569),
+                          ),
                         ),
                       ),
-                      TextButton.icon(
-                        onPressed: () async {
-                          final picked = await showDatePicker(
-                            context: context,
-                            initialDate: _selectedExpiry,
-                            firstDate: DateTime.now().subtract(const Duration(days: 365)),
-                            lastDate: DateTime.now().add(const Duration(days: 3650)),
-                          );
-                          if (picked != null) {
-                            setState(() => _selectedExpiry = picked);
-                          }
-                        },
-                        icon: const Icon(Icons.calendar_today, size: 16),
-                        label: const Text('Change Date'),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (_selectedExpiry != null)
+                            IconButton(
+                              icon: const Icon(Icons.clear, size: 16),
+                              tooltip: 'Clear Date',
+                              onPressed: () => setState(() => _selectedExpiry = null),
+                            ),
+                          TextButton.icon(
+                            onPressed: () async {
+                              final picked = await showDatePicker(
+                                context: context,
+                                initialDate: _selectedExpiry ?? DateTime.now().add(const Duration(days: 365)),
+                                firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                                lastDate: DateTime.now().add(const Duration(days: 3650)),
+                              );
+                              if (picked != null) {
+                                setState(() => _selectedExpiry = picked);
+                              }
+                            },
+                            icon: const Icon(Icons.calendar_today, size: 16),
+                            label: Text(_selectedExpiry != null ? 'Change Date' : 'Set Date'),
+                          ),
+                        ],
                       ),
                     ],
                   ),

@@ -1,5 +1,8 @@
+import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path/path.dart' as p;
 import '../../core/localization/app_language.dart';
 import '../../core/theme/app_preferences_provider.dart';
 import '../../core/theme/liquid_glass_theme.dart';
@@ -7,6 +10,8 @@ import '../../domain/entities/document_type.dart';
 import '../../domain/entities/sync_status.dart';
 import '../../domain/entities/vehicle_document.dart';
 import '../controllers/document_providers.dart';
+import '../utils/document_action_helper.dart';
+import '../widgets/import_document_metadata_sheet.dart';
 import 'document_viewer_screen.dart';
 
 /// Vault Catalog Home Screen with Apple Liquid Glass styling,
@@ -28,6 +33,11 @@ class HomeScreen extends ConsumerStatefulWidget {
 class _HomeScreenState extends ConsumerState<HomeScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
+
+  static const int _maxFileSizeBytes = 5 * 1024 * 1024; // 5 MB maximum limit
+  static const List<String> _allowedExtensions = ['pdf', 'png', 'jpg', 'jpeg'];
+  bool _isStatsExpanded = true;
+  bool _isImporting = false;
 
   @override
   void dispose() {
@@ -80,6 +90,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ],
         ),
         actions: [
+          // Toggle mechanism for collapsible statistics header
+          IconButton(
+            tooltip: _isStatsExpanded ? 'Hide Statistics' : 'Show Statistics',
+            icon: Icon(
+              _isStatsExpanded ? Icons.bar_chart : Icons.bar_chart_outlined,
+              size: 22,
+              color: _isStatsExpanded ? LiquidGlassTheme.accentAmber : (isDark ? Colors.white70 : Colors.black54),
+            ),
+            onPressed: () => setState(() => _isStatsExpanded = !_isStatsExpanded),
+          ),
+          // Manual Document Import Action
+          IconButton(
+            tooltip: 'Import Document (.pdf, .png, .jpg, .jpeg)',
+            icon: const Icon(Icons.file_upload_outlined, size: 22),
+            onPressed: () => _handleManualImport(context),
+          ),
           IconButton(
             tooltip: 'Sync Status',
             icon: Icon(
@@ -104,7 +130,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       ),
       body: docsAsync.when(
         data: (docs) {
-          final filteredDocs = docs.where((doc) {
+          // Strict real data filtering (excludes any VERIFY-E2E probe documents)
+          final realDocs = docs
+              .where((d) =>
+                  !d.vehicleRegNo.startsWith('VERIFY-') &&
+                  !d.title.toLowerCase().contains('probe'))
+              .toList();
+
+          final filteredDocs = realDocs.where((doc) {
             if (_searchQuery.isEmpty) return true;
             final query = _searchQuery.toLowerCase();
             return doc.vehicleRegNo.toLowerCase().contains(query) ||
@@ -112,55 +145,70 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 (doc.policyNo?.toLowerCase().contains(query) ?? false);
           }).toList();
 
-          return RefreshIndicator(
-            color: LiquidGlassTheme.accentAmber,
-            onRefresh: () async {
-              await ref.read(syncQueueRepositoryProvider).reconcileStartupDelta();
-            },
-            child: SingleChildScrollView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(18.0, 8.0, 18.0, 110.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Sync Status Badge
-                  _buildSyncStatusBar(syncStateAsync.value, isLiquidGlass, language),
-                  const SizedBox(height: 14),
-
-                  // Quick Stats Row
-                  _buildStatsRow(docs, isLiquidGlass, language, isDark),
-                  const SizedBox(height: 16),
-
-                  // Search Field
-                  _buildSearchBar(isLiquidGlass, language, isDark),
-                  const SizedBox(height: 18),
-
-                  if (docs.isEmpty) ...[
-                    _buildEmptyState(isLiquidGlass, language, isDark),
-                  ] else if (filteredDocs.isEmpty) ...[
-                    Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(32.0),
-                        child: Text(
-                          'No documents match "$_searchQuery"',
-                          style: TextStyle(
-                            color: isDark ? Colors.white60 : Colors.black54,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ] else if (isCategorized) ...[
-                    // Categorized View
-                    _buildCategorizedSections(context, filteredDocs, isLiquidGlass, language, isDark),
-                  ] else ...[
-                    // Flat View
-                    _buildFlatDocumentList(context, filteredDocs, isLiquidGlass, isDark),
-                  ],
-
-                  const SizedBox(height: 90), // Space for floating bottom dock
-                ],
+          return Column(
+            children: [
+              // Extracted Collapsible Statistics Header directly below AppBar
+              AnimatedSize(
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOutCubic,
+                child: _isStatsExpanded
+                    ? Padding(
+                        padding: const EdgeInsets.fromLTRB(18.0, 4.0, 18.0, 10.0),
+                        child: _buildStatsRow(realDocs, isLiquidGlass, language, isDark),
+                      )
+                    : const SizedBox.shrink(),
               ),
-            ),
+
+              // Main Document Feed (scrollable content with stats row extracted)
+              Expanded(
+                child: RefreshIndicator(
+                  color: LiquidGlassTheme.accentAmber,
+                  onRefresh: () async {
+                    await ref.read(syncQueueRepositoryProvider).reconcileStartupDelta();
+                  },
+                  child: SingleChildScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(18.0, 4.0, 18.0, 110.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Sync Status Badge
+                        _buildSyncStatusBar(syncStateAsync.value, isLiquidGlass, language),
+                        const SizedBox(height: 14),
+
+                        // Search Field
+                        _buildSearchBar(isLiquidGlass, language, isDark),
+                        const SizedBox(height: 18),
+
+                        if (realDocs.isEmpty) ...[
+                          _buildEmptyState(isLiquidGlass, language, isDark),
+                        ] else if (filteredDocs.isEmpty) ...[
+                          Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(32.0),
+                              child: Text(
+                                'No documents match "$_searchQuery"',
+                                style: TextStyle(
+                                  color: isDark ? Colors.white60 : Colors.black54,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ] else if (isCategorized) ...[
+                          // Categorized View
+                          _buildCategorizedSections(context, filteredDocs, isLiquidGlass, language, isDark),
+                        ] else ...[
+                          // Flat View
+                          _buildFlatDocumentList(context, filteredDocs, isLiquidGlass, isDark),
+                        ],
+
+                        const SizedBox(height: 90), // Space for floating bottom dock
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
           );
         },
         loading: () => const Center(
@@ -441,7 +489,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   ) {
     final isExpired = doc.isExpired;
 
-    return LiquidGlassCard(
+    final cardContent = LiquidGlassCard(
       isLiquidGlass: isLiquidGlass,
       padding: const EdgeInsets.all(14),
       onTap: () {
@@ -505,14 +553,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   ),
                 ],
                 const SizedBox(height: 8),
-                Row(
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
                   children: [
                     _buildMiniBadge(
                       doc.documentType.label,
                       isDark ? Colors.white10 : const Color(0xFFE2E8F0),
                       isDark ? Colors.white70 : const Color(0xFF475569),
                     ),
-                    const SizedBox(width: 8),
                     if (doc.expiryDate != null)
                       _buildMiniBadge(
                         isExpired ? 'EXPIRED' : 'Expires in ${_daysRemaining(doc.expiryDate!)}d',
@@ -534,6 +583,42 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ),
         ],
       ),
+    );
+
+    return Dismissible(
+      key: ValueKey('doc_${doc.id}'),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20),
+        decoration: BoxDecoration(
+          color: const Color(0xFFDC2626),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.delete_outline, color: Colors.white, size: 24),
+            SizedBox(width: 8),
+            Text(
+              'Delete',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+              ),
+            ),
+          ],
+        ),
+      ),
+      confirmDismiss: (_) async {
+        return await DocumentActionHelper.confirmAndDeleteDocument(
+          context: context,
+          ref: ref,
+          document: doc,
+        );
+      },
+      child: cardContent,
     );
   }
 
@@ -611,6 +696,26 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       ),
                     ),
                   ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 46,
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: LiquidGlassTheme.accentAmber,
+                        side: const BorderSide(color: LiquidGlassTheme.accentAmber),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      onPressed: () => _handleManualImport(context),
+                      icon: const Icon(Icons.upload_file_rounded, size: 18),
+                      label: const Text(
+                        'Import File (.pdf, .png, .jpg)',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -619,4 +724,146 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       ),
     );
   }
+
+  /// Secure manual document import with file_picker, strict 5 MB limit, and format checks.
+  Future<void> _handleManualImport(BuildContext context) async {
+    if (_isImporting) return;
+
+    try {
+      setState(() => _isImporting = true);
+
+      final pickedFiles = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: _allowedExtensions,
+      );
+
+      if (pickedFiles.isEmpty) {
+        return;
+      }
+
+      final pickedFile = pickedFiles.first;
+      final filePath = pickedFile.path;
+
+      if (filePath == null) {
+        if (context.mounted) {
+          _showErrorSnackBar(context, 'Unable to locate file on storage.');
+        }
+        return;
+      }
+
+      final file = File(filePath);
+      if (!await file.exists()) {
+        if (context.mounted) {
+          _showErrorSnackBar(context, 'Selected file does not exist on disk.');
+        }
+        return;
+      }
+
+      // Format validation: .pdf, .png, .jpg, .jpeg
+      final fileExtension = (pickedFile.extension ?? p.extension(filePath))
+          .replaceAll('.', '')
+          .toLowerCase();
+
+      if (!_allowedExtensions.contains(fileExtension)) {
+        if (context.mounted) {
+          _showErrorSnackBar(
+            context,
+            'Unsupported format: .$fileExtension. Only .pdf, .png, .jpg, and .jpeg files are allowed.',
+          );
+        }
+        return;
+      }
+
+      // Storage protection validation: strict 5 MB maximum
+      final fileSize = pickedFile.lengthSync() ?? (await file.length());
+      if (fileSize > _maxFileSizeBytes) {
+        final fileSizeMb = (fileSize / (1024 * 1024)).toStringAsFixed(2);
+        if (context.mounted) {
+          _showErrorSnackBar(
+            context,
+            'File size ($fileSizeMb MB) exceeds the strict 5 MB limit. Import aborted to protect vault storage.',
+          );
+        }
+        return;
+      }
+
+      // Show metadata sheet to confirm and ingest with Gemini auto-fill & editability
+      if (context.mounted) {
+        await ImportDocumentMetadataSheet.show(
+          context: context,
+          sourceFile: file,
+          originalName: pickedFile.name,
+          extension: fileExtension,
+          fileSize: fileSize,
+          onSaveSuccess: () {
+            if (context.mounted) {
+              _showSuccessSnackBar(
+                context,
+                'Successfully secured "${pickedFile.name}" into vault!',
+              );
+            }
+          },
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        _showErrorSnackBar(context, 'Document import failed: $e');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isImporting = false);
+      }
+    }
+  }
+
+  void _showErrorSnackBar(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.white, size: 20),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                message,
+                style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: const Color(0xFFDC2626),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+        duration: const Duration(seconds: 4),
+      ),
+    );
+  }
+
+  void _showSuccessSnackBar(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.check_circle_outline, color: Colors.greenAccent, size: 20),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                message,
+                style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: const Color(0xFF1E293B),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
 }
