@@ -19,4 +19,7 @@ class DriveConstants {
   static const int maxSyncRetries = 5;
   static const int baseRetryDelaySeconds = 5;
   static const int maxRetryDelaySeconds = 900; // 15 minutes
+
+  /// Background WorkManager task key
+  static const String backgroundSyncTaskKey = 'com.vehicledocs.syncTask';
 }

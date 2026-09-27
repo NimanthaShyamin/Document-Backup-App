@@ -5,6 +5,7 @@ import '../../domain/entities/vehicle_document.dart';
 import '../controllers/document_providers.dart';
 import '../widgets/cloud_sync_settings_card.dart';
 import 'document_viewer_screen.dart';
+import 'login_screen.dart';
 
 /// Offline-first Document Catalog displaying instantly from SQLite WAL storage.
 class DocumentListScreen extends ConsumerStatefulWidget {
@@ -66,6 +67,8 @@ class _DocumentListScreenState extends ConsumerState<DocumentListScreen> {
   Widget build(BuildContext context) {
     final docsAsync = ref.watch(vehicleDocumentsStreamProvider);
     final syncStateAsync = ref.watch(syncEngineStateProvider);
+    final userAsync = ref.watch(googleAuthStateProvider);
+    final currentUser = userAsync.value;
 
     return Scaffold(
       backgroundColor: const Color(0xFF121214),
@@ -75,16 +78,39 @@ class _DocumentListScreenState extends ConsumerState<DocumentListScreen> {
         title: const Row(
           children: [
             Icon(Icons.directions_car_filled, color: Colors.amberAccent, size: 24),
-            SizedBox(width: 10),
-            Text(
-              'Vehicle Document Vault',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Vehicle Document Vault',
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+              ),
             ),
           ],
         ),
         actions: [
           IconButton(
-            tooltip: 'Google Drive Sync',
+            tooltip: currentUser != null
+                ? 'Account (${currentUser.email})'
+                : 'Google Login & Cloud Backup',
+            icon: currentUser != null
+                ? (currentUser.photoUrl != null
+                    ? CircleAvatar(
+                        radius: 13,
+                        backgroundImage: NetworkImage(currentUser.photoUrl!),
+                      )
+                    : const Icon(Icons.account_circle, color: Colors.greenAccent))
+                : const Icon(Icons.account_circle_outlined, color: Colors.amberAccent),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const LoginScreen(isOpenedFromSettings: true),
+                ),
+              );
+            },
+          ),
+          IconButton(
+            tooltip: 'Google Drive Sync Settings',
             icon: const Icon(Icons.cloud_sync, color: Colors.amberAccent),
             onPressed: () => _showCloudSyncModal(context),
           ),
@@ -157,7 +183,7 @@ class _DocumentListScreenState extends ConsumerState<DocumentListScreen> {
     } else if (state is SyncEngineSyncing) {
       return Container(
         height: 28,
-        color: Colors.amber.withOpacity(0.2),
+        color: Colors.amber.withValues(alpha: 0.2),
         alignment: Alignment.center,
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -178,7 +204,7 @@ class _DocumentListScreenState extends ConsumerState<DocumentListScreen> {
     } else if (state is SyncEngineOffline) {
       return Container(
         height: 28,
-        color: Colors.grey.withOpacity(0.3),
+        color: Colors.grey.withValues(alpha: 0.3),
         alignment: Alignment.center,
         child: const Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -195,7 +221,7 @@ class _DocumentListScreenState extends ConsumerState<DocumentListScreen> {
     } else if (state is SyncEngineFailed) {
       return Container(
         height: 28,
-        color: Colors.red.withOpacity(0.25),
+        color: Colors.red.withValues(alpha: 0.25),
         alignment: Alignment.center,
         child: Text(
           'Sync Paused: ${state.error}',
@@ -226,7 +252,7 @@ class _DocumentListScreenState extends ConsumerState<DocumentListScreen> {
           color: const Color(0xFF1E1E24),
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: isExpired ? Colors.redAccent.withOpacity(0.4) : Colors.white10,
+            color: isExpired ? Colors.redAccent.withValues(alpha: 0.4) : Colors.white10,
           ),
         ),
         child: Row(
@@ -263,13 +289,13 @@ class _DocumentListScreenState extends ConsumerState<DocumentListScreen> {
                   const SizedBox(height: 4),
                   Text(
                     doc.title,
-                    style: TextStyle(color: Colors.white.withOpacity(0.85), fontSize: 13),
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.85), fontSize: 13),
                   ),
                   if (doc.policyNo != null) ...[
                     const SizedBox(height: 2),
                     Text(
                       'Ref: ${doc.policyNo}',
-                      style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 11),
+                      style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 11),
                     ),
                   ],
                   const SizedBox(height: 8),
@@ -277,14 +303,14 @@ class _DocumentListScreenState extends ConsumerState<DocumentListScreen> {
                     children: [
                       _buildMiniBadge(
                         doc.documentType.label,
-                        Colors.white.withOpacity(0.1),
+                        Colors.white.withValues(alpha: 0.1),
                         Colors.white70,
                       ),
                       const SizedBox(width: 8),
                       if (doc.expiryDate != null)
                         _buildMiniBadge(
                           isExpired ? 'EXPIRED' : 'Expires in ${_daysRemaining(doc.expiryDate!)}d',
-                          isExpired ? Colors.red.withOpacity(0.2) : Colors.green.withOpacity(0.2),
+                          isExpired ? Colors.red.withValues(alpha: 0.2) : Colors.green.withValues(alpha: 0.2),
                           isExpired ? Colors.redAccent : Colors.greenAccent,
                         ),
                     ],
@@ -319,11 +345,12 @@ class _DocumentListScreenState extends ConsumerState<DocumentListScreen> {
   }
 
   Widget _buildEmptyState() {
+    final user = ref.watch(googleAuthStateProvider).value;
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 24.0),
       child: Column(
         children: [
-          Icon(Icons.folder_open, size: 56, color: Colors.white.withOpacity(0.3)),
+          Icon(Icons.folder_open, size: 56, color: Colors.white.withValues(alpha: 0.3)),
           const SizedBox(height: 12),
           const Text(
             'No Vehicle Documents Found',
@@ -333,8 +360,34 @@ class _DocumentListScreenState extends ConsumerState<DocumentListScreen> {
           Text(
             'Documents stored locally or synced via Google Drive AppData will appear here instantly.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 13),
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 13),
           ),
+          if (user == null) ...[
+            const SizedBox(height: 18),
+            SizedBox(
+              width: double.infinity,
+              height: 44,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.amberAccent,
+                  foregroundColor: Colors.black87,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const LoginScreen(isOpenedFromSettings: true),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.login, size: 18),
+                label: const Text(
+                  'Sign In with Google to Restore Backups',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 24),
           const CloudSyncSettingsCard(),
         ],

@@ -5,11 +5,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:workmanager/workmanager.dart';
 import 'core/hardware/notification_engine.dart';
 import 'core/storage/file_storage_manager.dart';
+import 'core/theme/app_preferences_provider.dart';
 import 'data/datasources/local/app_database.dart';
 import 'data/datasources/remote/drive_sync_service.dart';
 import 'data/datasources/remote/google_auth_service.dart';
 import 'data/repositories/sync_repository.dart';
-import 'presentation/screens/document_list_screen.dart';
+import 'presentation/screens/auth_gate.dart';
 
 const String backgroundSyncTaskKey = 'com.vehicledocs.syncTask';
 
@@ -64,7 +65,6 @@ Future<void> main() async {
   try {
     await Workmanager().initialize(
       callbackDispatcher,
-      isInDebugMode: false,
     );
     // Register periodic background sync (every 15 minutes minimum supported by OS)
     await Workmanager().registerPeriodicTask(
@@ -86,15 +86,34 @@ Future<void> main() async {
   );
 }
 
-class VehicleDocumentVaultApp extends StatelessWidget {
+class VehicleDocumentVaultApp extends ConsumerWidget {
   const VehicleDocumentVaultApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final themeMode = ref.watch(themeModeProvider);
+
     return MaterialApp(
       title: 'Vehicle Document Vault',
       debugShowCheckedModeBanner: false,
+      themeMode: themeMode,
       theme: ThemeData(
+        brightness: Brightness.light,
+        scaffoldBackgroundColor: const Color(0xFFF6F8FB),
+        primaryColor: const Color(0xFF2563EB),
+        colorScheme: const ColorScheme.light(
+          primary: Color(0xFF2563EB),
+          secondary: Color(0xFFFFD13B),
+          surface: Color(0xFFFFFFFF),
+        ),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          foregroundColor: Color(0xFF0F172A),
+        ),
+        useMaterial3: true,
+      ),
+      darkTheme: ThemeData(
         brightness: Brightness.dark,
         scaffoldBackgroundColor: const Color(0xFF121214),
         primaryColor: Colors.amberAccent,
@@ -104,12 +123,14 @@ class VehicleDocumentVaultApp extends StatelessWidget {
           surface: Color(0xFF1E1E24),
         ),
         appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFF1A1A1E),
+          backgroundColor: Colors.transparent,
           elevation: 0,
+          foregroundColor: Colors.white,
         ),
         useMaterial3: true,
       ),
-      home: const DocumentListScreen(),
+      home: const AuthGate(),
     );
   }
 }
+

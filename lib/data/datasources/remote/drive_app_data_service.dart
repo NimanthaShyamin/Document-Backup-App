@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io';
 import 'package:crypto/crypto.dart';
@@ -32,7 +31,8 @@ class DriveAppDataService {
       : _googleSignIn = googleSignIn ??
             GoogleSignIn(
               scopes: [
-                DriveConstants.appDataScope, // 'https://www.googleapis.com/auth/drive.appdata'
+                DriveConstants
+                    .appDataScope, // 'https://www.googleapis.com/auth/drive.appdata'
               ],
             );
 
@@ -45,7 +45,8 @@ class DriveAppDataService {
       account ??= await _googleSignIn.signIn();
 
       if (account == null) {
-        throw const DriveAuthException('User canceled Google Drive authentication.');
+        throw const DriveAuthException(
+            'User canceled Google Drive authentication.');
       }
 
       final authHeaders = await account.authHeaders;
@@ -53,8 +54,10 @@ class DriveAppDataService {
       _driveApi = drive.DriveApi(authClient);
       return _driveApi!;
     } catch (e, stack) {
-      developer.log('Google Drive Authentication Failed', error: e, stackTrace: stack);
-      throw DriveAuthException('Failed to authenticate with Google Drive AppData: $e');
+      developer.log('Google Drive Authentication Failed',
+          error: e, stackTrace: stack);
+      throw DriveAuthException(
+          'Failed to authenticate with Google Drive AppData: $e');
     }
   }
 
@@ -68,7 +71,8 @@ class DriveAppDataService {
       do {
         final fileList = await driveApi.files.list(
           spaces: DriveConstants.appDataSpace, // 'appDataFolder'
-          fields: 'nextPageToken, files(id, name, modifiedTime, md5Checksum, appProperties, trashed, size)',
+          $fields:
+              'nextPageToken, files(id, name, modifiedTime, md5Checksum, appProperties, trashed, size)',
           pageToken: pageToken,
           pageSize: 100,
         );
@@ -89,7 +93,8 @@ class DriveAppDataService {
       return results;
     } catch (e, stack) {
       developer.log('Error listing AppData files', error: e, stackTrace: stack);
-      throw DriveSyncException('Failed to list files from Google Drive AppData: $e');
+      throw DriveSyncException(
+          'Failed to list files from Google Drive AppData: $e');
     }
   }
 
@@ -107,7 +112,8 @@ class DriveAppDataService {
     final driveApi = await _ensureAuthenticated();
 
     if (!await localFile.exists()) {
-      throw FileSystemException('Local file does not exist for upload', localFile.path);
+      throw FileSystemException(
+          'Local file does not exist for upload', localFile.path);
     }
 
     final fileLength = await localFile.length();
@@ -120,7 +126,8 @@ class DriveAppDataService {
       'policy_no': policyNo ?? '',
       'expiry_date': expiryDate?.millisecondsSinceEpoch.toString() ?? '',
       'checksum_sha256': checksumSha256,
-      'client_modified': lastModifiedTimestamp.millisecondsSinceEpoch.toString(),
+      'client_modified':
+          lastModifiedTimestamp.millisecondsSinceEpoch.toString(),
     };
 
     final driveFile = drive.File()
@@ -138,7 +145,7 @@ class DriveAppDataService {
       final existingFiles = await driveApi.files.list(
         spaces: DriveConstants.appDataSpace,
         q: "name = '$fileName' and trashed = false",
-        fields: 'files(id)',
+        $fields: 'files(id)',
       );
 
       drive.File uploadedFile;
@@ -159,12 +166,14 @@ class DriveAppDataService {
       }
 
       if (uploadedFile.id == null) {
-        throw const DriveSyncException('Google Drive returned a null file ID after upload.');
+        throw const DriveSyncException(
+            'Google Drive returned a null file ID after upload.');
       }
 
       return uploadedFile.id!;
     } catch (e, stack) {
-      developer.log('Failed to upload document to AppData', error: e, stackTrace: stack);
+      developer.log('Failed to upload document to AppData',
+          error: e, stackTrace: stack);
       throw DriveSyncException('Upload failed for document $documentId: $e');
     }
   }
@@ -213,13 +222,15 @@ class DriveAppDataService {
       }
       await stagingFile.rename(targetFile.path);
 
-      developer.log('Successfully downloaded and validated: ${targetFile.path}');
+      developer
+          .log('Successfully downloaded and validated: ${targetFile.path}');
       return targetFile;
     } catch (e, stack) {
       if (await stagingFile.exists()) {
         await stagingFile.delete();
       }
-      developer.log('Failed to download file $driveFileId', error: e, stackTrace: stack);
+      developer.log('Failed to download file $driveFileId',
+          error: e, stackTrace: stack);
       throw DriveSyncException('Download failed for file $driveFileId: $e');
     }
   }
@@ -231,7 +242,8 @@ class DriveAppDataService {
       await driveApi.files.delete(driveFileId);
       developer.log('Deleted AppData file: $driveFileId');
     } catch (e, stack) {
-      developer.log('Failed to delete AppData file $driveFileId', error: e, stackTrace: stack);
+      developer.log('Failed to delete AppData file $driveFileId',
+          error: e, stackTrace: stack);
       throw DriveSyncException('Deletion failed for $driveFileId: $e');
     }
   }

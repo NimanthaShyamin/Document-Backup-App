@@ -33,7 +33,7 @@ dependencies:
 
   # Network Status & Background Worker
   connectivity_plus: ^6.0.3
-  workmanager: ^0.5.2
+  workmanager: ^0.10.10
 
   # Hardware Controls (Screen Luminance & Alerts)
   screen_brightness: ^2.0.0
@@ -44,6 +44,7 @@ dependencies:
   pdfx: ^2.6.0
   qr_flutter: ^4.1.0
   intl: ^0.19.0
+  shared_preferences: ^2.5.5
 
 dev_dependencies:
   flutter_test:

@@ -190,8 +190,6 @@ class SyncRepository implements ISyncQueueRepository {
       );
 
       final remoteBackups = await _driveService.listCloudBackups();
-      final remoteMap = {for (final f in remoteBackups) f.documentId: f};
-
       final localDocs = await _db.select(_db.vehicleDocuments).get();
       final localMap = {for (final d in localDocs) d.id: d};
 

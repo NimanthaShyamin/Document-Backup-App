@@ -20,12 +20,12 @@ class BrightnessControllerService with WidgetsBindingObserver {
     try {
       if (_isMaxBrightnessActive) return;
 
-      // Cache the current system brightness setting before boosting
-      _cachedPreviousBrightness = await _screenBrightness.current;
+      // Cache the current application brightness setting before boosting
+      _cachedPreviousBrightness = await _screenBrightness.application;
       developer.log('Cached prior screen brightness: $_cachedPreviousBrightness');
 
       // Boost luminance to absolute 100% for optical barcode/document scanning
-      await _screenBrightness.setScreenBrightness(1.0);
+      await _screenBrightness.setApplicationScreenBrightness(1.0);
       _isMaxBrightnessActive = true;
 
       // Register lifecycle observer to monitor app minimize / background switches
@@ -44,9 +44,9 @@ class BrightnessControllerService with WidgetsBindingObserver {
 
       if (_cachedPreviousBrightness != null) {
         developer.log('Restoring screen brightness to cached level: $_cachedPreviousBrightness');
-        await _screenBrightness.setScreenBrightness(_cachedPreviousBrightness!);
+        await _screenBrightness.setApplicationScreenBrightness(_cachedPreviousBrightness!);
       } else {
-        await _screenBrightness.resetScreenBrightness();
+        await _screenBrightness.resetApplicationScreenBrightness();
       }
 
       _isMaxBrightnessActive = false;
@@ -61,11 +61,11 @@ class BrightnessControllerService with WidgetsBindingObserver {
     // Dim immediately if user minimizes or switches to another app to save battery and avoid blinding
     if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
       if (_cachedPreviousBrightness != null) {
-        _screenBrightness.setScreenBrightness(_cachedPreviousBrightness!);
+        _screenBrightness.setApplicationScreenBrightness(_cachedPreviousBrightness!);
       }
     } else if (state == AppLifecycleState.resumed && _isMaxBrightnessActive) {
       // Re-boost to 100% if returning to the active document viewer
-      _screenBrightness.setScreenBrightness(1.0);
+      _screenBrightness.setApplicationScreenBrightness(1.0);
     }
   }
 }

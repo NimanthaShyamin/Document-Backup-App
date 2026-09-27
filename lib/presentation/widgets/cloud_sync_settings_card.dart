@@ -592,16 +592,18 @@ class _CloudSyncSettingsCardState extends ConsumerState<CloudSyncSettingsCard> {
           Row(
             children: [
               const Icon(Icons.science_outlined, color: Colors.amberAccent, size: 18),
-              const SizedBox(width: 8),
-              const Text(
-                'OAuth & Drive AppData Verification',
-                style: TextStyle(
-                  color: Colors.amberAccent,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 13,
+              const Expanded(
+                child: Text(
+                  'OAuth & Drive AppData Verification',
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.amberAccent,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
                 ),
               ),
-              const Spacer(),
+              const SizedBox(width: 8),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(

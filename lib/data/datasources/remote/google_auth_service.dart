@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:developer' as developer;
 import 'dart:io';
 import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sign_in_as_googleapis_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:googleapis/drive/v3.dart' as drive;
@@ -53,10 +54,11 @@ class GoogleAuthService {
   GoogleAuthService({
     GoogleSignIn? googleSignIn,
     String? clientId,
+    String? serverClientId,
   }) : _googleSignIn = googleSignIn ??
             GoogleSignIn(
-              clientId: clientId ?? defaultClientId,
-              serverClientId: clientId ?? defaultClientId,
+              clientId: (!kIsWeb && Platform.isAndroid) ? null : (clientId ?? defaultClientId),
+              serverClientId: serverClientId,
               scopes: const [
                 driveAppDataScope,
               ],
@@ -251,6 +253,19 @@ class GoogleAuthService {
     } catch (e, stack) {
       developer.log('Error during Google account disconnect', error: e, stackTrace: stack);
       throw DriveAuthException('Disconnect failed: $e', e);
+    }
+  }
+
+  /// Verifies active Google Drive API AppData connectivity and returns user email if successful.
+  Future<bool> testDriveConnection() async {
+    try {
+      final driveApi = await getDriveApi(promptIfUnauthenticated: false);
+      final about = await driveApi.about.get($fields: 'user');
+      developer.log('Drive connection test passed: ${about.user?.emailAddress}');
+      return about.user != null;
+    } catch (e, stack) {
+      developer.log('Drive connection test failed', error: e, stackTrace: stack);
+      return false;
     }
   }
 }
