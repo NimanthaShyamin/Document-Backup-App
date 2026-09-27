@@ -32,6 +32,7 @@ class HomeScreen extends ConsumerStatefulWidget {
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
   String _searchQuery = '';
 
   static const int _maxFileSizeBytes = 5 * 1024 * 1024; // 5 MB maximum limit
@@ -42,6 +43,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   @override
   void dispose() {
     _searchController.dispose();
+    _searchFocusNode.dispose();
     super.dispose();
   }
 
@@ -161,14 +163,30 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
               // Main Document Feed (scrollable content with stats row extracted)
               Expanded(
-                child: RefreshIndicator(
-                  color: LiquidGlassTheme.accentAmber,
-                  onRefresh: () async {
-                    await ref.read(syncQueueRepositoryProvider).reconcileStartupDelta();
+                child: NotificationListener<ScrollNotification>(
+                  onNotification: (scrollNotification) {
+                    if (scrollNotification is OverscrollNotification && scrollNotification.overscroll < -8) {
+                      if (!_searchFocusNode.hasFocus) {
+                        _searchFocusNode.requestFocus();
+                      }
+                    } else if (scrollNotification is ScrollUpdateNotification) {
+                      if (scrollNotification.metrics.pixels <= 0 &&
+                          (scrollNotification.scrollDelta ?? 0) < -8) {
+                        if (!_searchFocusNode.hasFocus) {
+                          _searchFocusNode.requestFocus();
+                        }
+                      }
+                    }
+                    return false;
                   },
-                  child: SingleChildScrollView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(18.0, 4.0, 18.0, 110.0),
+                  child: RefreshIndicator(
+                    color: LiquidGlassTheme.accentAmber,
+                    onRefresh: () async {
+                      await ref.read(syncQueueRepositoryProvider).reconcileStartupDelta();
+                    },
+                    child: SingleChildScrollView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(18.0, 4.0, 18.0, 110.0),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -208,8 +226,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   ),
                 ),
               ),
-            ],
-          );
+            ),
+          ],
+        );
         },
         loading: () => const Center(
           child: CircularProgressIndicator(color: LiquidGlassTheme.accentAmber),
@@ -351,6 +370,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       radius: 16,
       child: TextField(
         controller: _searchController,
+        focusNode: _searchFocusNode,
         onChanged: (val) => setState(() => _searchQuery = val),
         style: TextStyle(
           fontSize: 13,

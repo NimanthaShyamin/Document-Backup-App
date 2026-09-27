@@ -36,6 +36,8 @@ class _DocumentViewerScreenState extends ConsumerState<DocumentViewerScreen> {
   String? _pdfLoadError;
   bool _isFullScreen = false;
 
+  double _dragOffsetY = 0.0;
+
   @override
   void initState() {
     super.initState();
@@ -111,8 +113,16 @@ class _DocumentViewerScreenState extends ConsumerState<DocumentViewerScreen> {
     }
   }
 
+  bool get _canSwipeDismiss {
+    // Prevent drag down dismiss if zoomed in
+    final scale = _transformationController.value.getMaxScaleOnAxis();
+    return scale <= 1.05;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final opacity = (1.0 - (_dragOffsetY / 400.0)).clamp(0.0, 1.0);
+
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: _isFullScreen
@@ -121,6 +131,10 @@ class _DocumentViewerScreenState extends ConsumerState<DocumentViewerScreen> {
               backgroundColor: Colors.black.withValues(alpha: 0.85),
               elevation: 0,
               iconTheme: const IconThemeData(color: Colors.white),
+              leading: IconButton(
+                icon: const Icon(Icons.arrow_back_ios_new_rounded),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
               title: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -170,39 +184,86 @@ class _DocumentViewerScreenState extends ConsumerState<DocumentViewerScreen> {
                 ),
               ],
             ),
-      body: Stack(
-        children: [
-          // 1. Core Document Content
-          Center(
-            child: _buildDocumentContent(),
+      body: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onVerticalDragUpdate: (details) {
+          if (!_canSwipeDismiss) return;
+          if (details.delta.dy > 0 || _dragOffsetY > 0) {
+            setState(() {
+              _dragOffsetY = (_dragOffsetY + details.delta.dy).clamp(0.0, 600.0);
+            });
+          }
+        },
+        onVerticalDragEnd: (details) {
+          if (!_canSwipeDismiss) return;
+          if (_dragOffsetY > 110 || (details.primaryVelocity ?? 0) > 600) {
+            Navigator.of(context).pop();
+          } else {
+            setState(() {
+              _dragOffsetY = 0.0;
+            });
+          }
+        },
+        onVerticalDragCancel: () {
+          setState(() {
+            _dragOffsetY = 0.0;
+          });
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 100),
+          curve: Curves.easeOutCubic,
+          transform: Matrix4.translationValues(0.0, _dragOffsetY, 0.0),
+          child: Opacity(
+            opacity: opacity,
+            child: SafeArea(
+              bottom: false,
+              child: Column(
+                children: [
+                  // 1. Swipe Handle & High-Luminance Indicator Banner
+                  if (!_isFullScreen) ...[
+                    const SizedBox(height: 6),
+                    Container(
+                      width: 36,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.3),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _buildBrightnessPill(),
+                    const SizedBox(height: 10),
+                  ],
+
+                  // 2. Core Document Content in an Expanded, balanced container
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12.0),
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          Center(
+                            child: _buildDocumentContent(),
+                          ),
+                          if (_isPdfDocument() && _totalPdfPages > 1)
+                            Positioned(
+                              bottom: 16,
+                              right: 16,
+                              child: _buildPdfPageIndicator(),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  // 3. Bottom Information & Metadata Card
+                  if (!_isFullScreen)
+                    _buildMetadataOverlay(context),
+                ],
+              ),
+            ),
           ),
-
-          // 2. High-Luminance Indicator Banner
-          if (!_isFullScreen)
-            Positioned(
-              top: 12,
-              left: 16,
-              right: 16,
-              child: _buildBrightnessPill(),
-            ),
-
-          // 3. Bottom Information & Metadata Sheet
-          if (!_isFullScreen)
-            Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
-              child: _buildMetadataOverlay(context),
-            ),
-
-          // 4. PDF Page Navigation Pill
-          if (_isPdfDocument() && _totalPdfPages > 1)
-            Positioned(
-              bottom: _isFullScreen ? 24 : 140,
-              right: 20,
-              child: _buildPdfPageIndicator(),
-            ),
-        ],
+        ),
       ),
     );
   }

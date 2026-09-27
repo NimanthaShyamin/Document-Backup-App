@@ -21,7 +21,7 @@ class LiquidGlassTheme {
   static const Color accentPurple = Color(0xFF9E00FF);
   static const Color accentCyan = Color(0xFF00E5FF);
 
-  /// Builds a frosted glass box decoration or crisp solid decoration based on `isLiquidGlass`.
+  /// Builds a frosted glass box decoration or crisp eye-friendly blended decoration based on `isLiquidGlass`.
   static BoxDecoration glassDecoration({
     required BuildContext context,
     required bool isLiquidGlass,
@@ -34,27 +34,43 @@ class LiquidGlassTheme {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     if (!isLiquidGlass) {
-      // Solid Modern Fallback
+      // Eye-friendly blended modern fallback (harmonious slate/graphite palette)
       return BoxDecoration(
-        color: customColor ?? (isDark ? const Color(0xFF1E1E24) : const Color(0xFFFFFFFF)),
+        color: customColor,
         borderRadius: BorderRadius.circular(radius),
+        gradient: customGradient ??
+            (customColor == null
+                ? LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: isDark
+                        ? const [
+                            Color(0xFF1A212E),
+                            Color(0xFF131822),
+                          ]
+                        : const [
+                            Color(0xFFFFFFFF),
+                            Color(0xFFF8FAFC),
+                          ],
+                  )
+                : null),
         border: customBorder ??
             Border.all(
-              color: isDark ? const Color(0xFF2A2A32) : const Color(0xFFE2E8F0),
+              color: isDark ? const Color(0xFF2A3447) : const Color(0xFFE2E8F0),
               width: 1.0,
             ),
         boxShadow: customShadows ??
             [
               BoxShadow(
-                color: isDark ? Colors.black.withValues(alpha: 0.3) : Colors.black.withValues(alpha: 0.04),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
+                color: isDark ? Colors.black.withValues(alpha: 0.35) : Colors.black.withValues(alpha: 0.05),
+                blurRadius: 14,
+                offset: const Offset(0, 5),
               ),
             ],
       );
     }
 
-    // Liquid Glass Active
+    // Apple Liquid Glass Active (Screenshot 4 aesthetic with specular highlight)
     return BoxDecoration(
       borderRadius: BorderRadius.circular(radius),
       gradient: customGradient ??
@@ -62,29 +78,146 @@ class LiquidGlassTheme {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: isDark
-                ? [
-                    const Color(0x28FFFFFF),
-                    const Color(0x12FFFFFF),
+                ? const [
+                    Color(0x38FFFFFF),
+                    Color(0x14FFFFFF),
                   ]
-                : [
-                    const Color(0xB8FFFFFF),
-                    const Color(0x7AFFFFFF),
+                : const [
+                    Color(0xC8FFFFFF),
+                    Color(0x8AFFFFFF),
                   ],
           ),
       border: customBorder ??
           Border.all(
-            color: isDark ? const Color(0x3DFFFFFF) : const Color(0xA3FFFFFF),
+            color: isDark ? const Color(0x4DFFFFFF) : const Color(0xB3FFFFFF),
             width: 1.2,
           ),
       boxShadow: customShadows ??
           [
             BoxShadow(
-              color: isDark ? Colors.black.withValues(alpha: 0.35) : Colors.black.withValues(alpha: 0.06),
-              blurRadius: 20,
+              color: isDark ? Colors.black.withValues(alpha: 0.40) : Colors.black.withValues(alpha: 0.08),
+              blurRadius: 24,
               spreadRadius: -2,
-              offset: const Offset(0, 8),
+              offset: const Offset(0, 10),
             ),
           ],
+    );
+  }
+
+  /// Specialized modal bottom sheet decoration (Liquid Glass or eye-friendly slate blend)
+  static BoxDecoration modalSheetDecoration({
+    required BuildContext context,
+    required bool isLiquidGlass,
+    double radius = 28.0,
+  }) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    if (!isLiquidGlass) {
+      return BoxDecoration(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(radius)),
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: isDark
+              ? const [
+                  Color(0xFF161B26),
+                  Color(0xFF0F131C),
+                ]
+              : const [
+                  Color(0xFFFFFFFF),
+                  Color(0xFFF1F5F9),
+                ],
+        ),
+        border: Border(
+          top: BorderSide(
+            color: isDark ? const Color(0xFF2B3548) : const Color(0xFFE2E8F0),
+            width: 1.5,
+          ),
+        ),
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black45,
+            blurRadius: 30,
+            offset: Offset(0, -6),
+          ),
+        ],
+      );
+    }
+
+    // Frosted Apple Liquid Glass Sheet (Matching Screenshot 4 aesthetic)
+    return BoxDecoration(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(radius)),
+      gradient: const LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          Color(0xE8161A26),
+          Color(0xF50E1119),
+        ],
+      ),
+      border: const Border(
+        top: BorderSide(
+          color: Color(0x66FFFFFF),
+          width: 1.5,
+        ),
+      ),
+      boxShadow: const [
+        BoxShadow(
+          color: Colors.black54,
+          blurRadius: 35,
+          offset: Offset(0, -8),
+        ),
+      ],
+    );
+  }
+
+  /// Eye-friendly field fill color and border for text fields & dropdowns
+  static InputDecoration fieldDecoration({
+    required BuildContext context,
+    required bool isLiquidGlass,
+    required String labelText,
+    String? hintText,
+    Widget? prefixIcon,
+    Widget? suffixIcon,
+  }) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    final fillColor = isLiquidGlass
+        ? const Color(0x1FFFFFFF)
+        : (isDark ? const Color(0xFF1B2230) : const Color(0xFFF1F5F9));
+
+    final borderColor = isLiquidGlass
+        ? const Color(0x33FFFFFF)
+        : (isDark ? const Color(0xFF2B3548) : const Color(0xFFCBD5E1));
+
+    return InputDecoration(
+      labelText: labelText,
+      hintText: hintText,
+      labelStyle: TextStyle(
+        color: isLiquidGlass ? Colors.white70 : (isDark ? Colors.white70 : const Color(0xFF475569)),
+        fontSize: 13,
+      ),
+      hintStyle: TextStyle(
+        color: isLiquidGlass ? Colors.white38 : (isDark ? Colors.white38 : const Color(0xFF94A3B8)),
+        fontSize: 13,
+      ),
+      prefixIcon: prefixIcon,
+      suffixIcon: suffixIcon,
+      filled: true,
+      fillColor: fillColor,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: BorderSide(color: borderColor, width: 1.0),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: BorderSide(color: borderColor, width: 1.0),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: accentAmber, width: 1.8),
+      ),
     );
   }
 }

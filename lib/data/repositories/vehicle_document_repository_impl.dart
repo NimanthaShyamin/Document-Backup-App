@@ -97,12 +97,16 @@ class VehicleDocumentRepositoryImpl implements IVehicleDocumentRepository {
 
     // Schedule local push notification alerts if expiry date is present
     if (expiryDate != null) {
-      await _notificationEngine.scheduleExpiryAlerts(
-        documentId: documentId,
-        title: title,
-        vehicleRegNo: vehicleRegNo,
-        expiryDate: expiryDate,
-      );
+      try {
+        await _notificationEngine.scheduleExpiryAlerts(
+          documentId: documentId,
+          title: title,
+          vehicleRegNo: vehicleRegNo,
+          expiryDate: expiryDate,
+        );
+      } catch (_) {
+        // Notification permission or exact alarm restriction shouldn't fail vault save
+      }
     }
 
     // Queue upload to private Google Drive AppData

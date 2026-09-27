@@ -1,15 +1,17 @@
 import 'dart:io';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/theme/app_preferences_provider.dart';
+import '../../core/theme/liquid_glass_theme.dart';
 import '../../domain/entities/document_type.dart';
 import '../controllers/document_providers.dart';
 
 /// Bottom sheet dialog for reviewing, editing, and confirming imported vehicle document metadata.
-/// Automatically initiates Gemini AI extraction upon presentation.
-/// If Gemini fails or cannot find details, presents a prompt box asking the user to manually enter
-/// the details while keeping all fields completely editable.
+/// Supports dynamic Apple Liquid Glass styling (Screenshot 4) and eye-friendly blended theme when off.
+/// Features in-sheet validation banners, empty category defaults, and guaranteed sheet dismissal upon save.
 class ImportDocumentMetadataSheet extends ConsumerStatefulWidget {
   final File sourceFile;
   final String originalName;
@@ -60,7 +62,8 @@ class _ImportDocumentMetadataSheetState
   late final TextEditingController _regNoController;
   late final TextEditingController _policyController;
 
-  late DocumentType _selectedType;
+  // Category starts strictly empty (null) - no fake guesses
+  DocumentType? _selectedType;
   DateTime? _selectedExpiry;
 
   bool _isGeminiAnalyzing = true;
@@ -68,6 +71,7 @@ class _ImportDocumentMetadataSheetState
   bool _geminiFoundDetails = false;
   String? _geminiStatusMessage;
 
+  String? _validationError;
   bool _isSaving = false;
 
   @override
@@ -77,19 +81,13 @@ class _ImportDocumentMetadataSheetState
     _regNoController = TextEditingController();
     _policyController = TextEditingController();
 
-    // Initial best-effort heuristic based on extension and filename
-    if (widget.extension == 'pdf') {
-      _selectedType = DocumentType.revenueLicense;
-    } else if (widget.originalName.toLowerCase().contains('fuel') ||
-        widget.originalName.toLowerCase().contains('qr')) {
-      _selectedType = DocumentType.fuelQr;
-    } else if (widget.originalName.toLowerCase().contains('insurance')) {
-      _selectedType = DocumentType.insuranceCard;
-    } else {
-      _selectedType = DocumentType.custom;
-    }
-
+    // Category strictly null by default until chosen or detected
+    _selectedType = null;
     _selectedExpiry = null;
+
+    _titleController.addListener(_clearValidationError);
+    _regNoController.addListener(_clearValidationError);
+    _policyController.addListener(_clearValidationError);
 
     // Run Gemini AI extraction in post-frame callback
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -97,8 +95,17 @@ class _ImportDocumentMetadataSheetState
     });
   }
 
+  void _clearValidationError() {
+    if (_validationError != null) {
+      setState(() => _validationError = null);
+    }
+  }
+
   @override
   void dispose() {
+    _titleController.removeListener(_clearValidationError);
+    _regNoController.removeListener(_clearValidationError);
+    _policyController.removeListener(_clearValidationError);
     _titleController.dispose();
     _regNoController.dispose();
     _policyController.dispose();
@@ -176,24 +183,31 @@ class _ImportDocumentMetadataSheetState
     final title = _titleController.text.trim();
     final regNo = _regNoController.text.trim();
 
-    if (title.isEmpty || regNo.isEmpty) {
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Document Title and Vehicle Registration No are required.'),
-          backgroundColor: Color(0xFFDC2626),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+    // In-sheet validation: Prominently displayed in front of the window
+    if (title.isEmpty || regNo.isEmpty || _selectedType == null) {
+      setState(() {
+        if (title.isEmpty && regNo.isEmpty && _selectedType == null) {
+          _validationError = 'Document Title, Vehicle Reg No, and Category are required.';
+        } else if (title.isEmpty) {
+          _validationError = 'Document Title is required.';
+        } else if (regNo.isEmpty) {
+          _validationError = 'Vehicle Registration No is required.';
+        } else {
+          _validationError = 'Please select a Document Category.';
+        }
+      });
       return;
     }
 
-    setState(() => _isSaving = true);
+    setState(() {
+      _isSaving = true;
+      _validationError = null;
+    });
 
     try {
       final repo = ref.read(vehicleDocumentRepositoryProvider);
       await repo.saveDocument(
-        documentType: _selectedType,
+        documentType: _selectedType!,
         title: title,
         vehicleRegNo: regNo,
         policyNo: _policyController.text.trim().isEmpty ? null : _policyController.text.trim(),
@@ -202,67 +216,84 @@ class _ImportDocumentMetadataSheetState
       );
 
       if (mounted) {
-        widget.onSaveSuccess?.call();
+        // Close modal sheet FIRST so it never hangs open
         Navigator.of(context).pop(true);
+        // Dispatch success callback to host screen
+        widget.onSaveSuccess?.call();
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _isSaving = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to save document: $e'),
-            backgroundColor: const Color(0xFFDC2626),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+        setState(() {
+          _isSaving = false;
+          _validationError = 'Failed to save document: $e';
+        });
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final isLiquidGlass = ref.watch(liquidGlassEnabledProvider);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final sizeKb = (widget.fileSize / 1024).toStringAsFixed(1);
+    final textColor = isLiquidGlass ? Colors.white : (isDark ? Colors.white : const Color(0xFF0F172A));
+    final subTextColor = isLiquidGlass ? Colors.white70 : (isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B));
+    final hintTextColor = isLiquidGlass ? Colors.white38 : (isDark ? const Color(0xFF64748B) : const Color(0xFF94A3B8));
 
-    return Padding(
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
-      ),
-      child: Container(
-        decoration: const BoxDecoration(
-          color: Color(0xFF1A1A1E),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Drag handle
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.white24,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
+    final sheetDecoration = LiquidGlassTheme.modalSheetDecoration(
+      context: context,
+      isLiquidGlass: isLiquidGlass,
+      radius: 28,
+    );
+
+    Widget sheetBody = Container(
+      decoration: sheetDecoration,
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Drag handle pill
+            Center(
+              child: Container(
+                width: 44,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: isLiquidGlass
+                      ? (isDark ? Colors.white30 : Colors.black26)
+                      : (isDark ? const Color(0xFF333E54) : const Color(0xFFCBD5E1)),
+                  borderRadius: BorderRadius.circular(10),
                 ),
               ),
-              const SizedBox(height: 16),
+            ),
+            const SizedBox(height: 16),
 
-              // File Header Card
-              Row(
+            // File Header Card
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: isLiquidGlass
+                    ? (isDark ? const Color(0x22FFFFFF) : const Color(0x60FFFFFF))
+                    : (isDark ? const Color(0xFF1E2433) : const Color(0xFFF1F5F9)),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: isLiquidGlass
+                      ? (isDark ? const Color(0x33FFFFFF) : const Color(0x66FFFFFF))
+                      : (isDark ? const Color(0xFF2B3548) : const Color(0xFFE2E8F0)),
+                ),
+              ),
+              child: Row(
                 children: [
                   Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: Colors.amberAccent.withValues(alpha: 0.15),
+                      color: LiquidGlassTheme.accentAmber.withValues(alpha: 0.18),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: const Icon(
                       Icons.file_present_rounded,
-                      color: Colors.amberAccent,
+                      color: LiquidGlassTheme.accentAmber,
                       size: 24,
                     ),
                   ),
@@ -271,222 +302,294 @@ class _ImportDocumentMetadataSheetState
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
+                        Text(
                           'Secure Document Import',
                           style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
+                            color: textColor,
+                            fontSize: 16,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          '${widget.originalName} • $sizeKb KB • Verified Format',
+                          '${widget.originalName} • $sizeKb KB • Verified',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(color: Colors.white60, fontSize: 12),
+                          style: TextStyle(
+                            color: subTextColor,
+                            fontSize: 12,
+                          ),
                         ),
                       ],
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 14),
+            ),
+            const SizedBox(height: 14),
 
-              // Gemini AI Status / Prompt Box
-              _buildGeminiStatusBox(),
+            // Gemini AI Status / Prompt Box
+            _buildGeminiStatusBox(isLiquidGlass, isDark),
+            const SizedBox(height: 16),
 
-              const SizedBox(height: 16),
+            // Title Field (Required & Fully Editable)
+            TextField(
+              controller: _titleController,
+              style: TextStyle(color: textColor, fontSize: 14),
+              decoration: LiquidGlassTheme.fieldDecoration(
+                context: context,
+                isLiquidGlass: isLiquidGlass,
+                labelText: 'Document Title *',
+                hintText: 'e.g. Annual Revenue License',
+                prefixIcon: const Icon(Icons.title, color: LiquidGlassTheme.accentAmber, size: 20),
+              ),
+            ),
+            const SizedBox(height: 12),
 
-              // Title Field (Fully Editable)
-              TextField(
-                controller: _titleController,
-                style: const TextStyle(color: Colors.white, fontSize: 14),
-                decoration: InputDecoration(
-                  labelText: 'Document Title',
-                  labelStyle: const TextStyle(color: Colors.white60),
-                  prefixIcon: const Icon(Icons.title, color: Colors.amberAccent, size: 20),
-                  filled: true,
-                  fillColor: const Color(0xFF222228),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
-                  ),
+            // Vehicle Reg No Field (Required & Fully Editable)
+            TextField(
+              controller: _regNoController,
+              style: TextStyle(color: textColor, fontSize: 14),
+              decoration: LiquidGlassTheme.fieldDecoration(
+                context: context,
+                isLiquidGlass: isLiquidGlass,
+                labelText: 'Vehicle Registration No *',
+                hintText: 'e.g. WP CAB-1234',
+                prefixIcon: const Icon(Icons.pin, color: LiquidGlassTheme.accentAmber, size: 20),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // Document Category Selector (Strictly empty default, user or AI picks)
+            DropdownButtonFormField<DocumentType?>(
+              key: ValueKey(_selectedType),
+              initialValue: _selectedType,
+              dropdownColor: isLiquidGlass
+                  ? const Color(0xFF161A26)
+                  : (isDark ? const Color(0xFF1B2230) : const Color(0xFFF1F5F9)),
+              style: TextStyle(
+                color: textColor,
+                fontSize: 14,
+              ),
+              decoration: LiquidGlassTheme.fieldDecoration(
+                context: context,
+                isLiquidGlass: isLiquidGlass,
+                labelText: 'Document Category *',
+                prefixIcon: const Icon(Icons.category_outlined, color: LiquidGlassTheme.accentAmber, size: 20),
+              ),
+              hint: Text(
+                'Select Document Category',
+                style: TextStyle(
+                  color: hintTextColor,
+                  fontSize: 14,
                 ),
               ),
-              const SizedBox(height: 12),
-
-              // Vehicle Reg No Field (Fully Editable)
-              TextField(
-                controller: _regNoController,
-                style: const TextStyle(color: Colors.white, fontSize: 14),
-                decoration: InputDecoration(
-                  labelText: 'Vehicle Registration No',
-                  labelStyle: const TextStyle(color: Colors.white60),
-                  prefixIcon: const Icon(Icons.pin, color: Colors.amberAccent, size: 20),
-                  filled: true,
-                  fillColor: const Color(0xFF222228),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-
-              // Document Category Selector (Fully Editable)
-              DropdownButtonFormField<DocumentType>(
-                key: ValueKey(_selectedType),
-                initialValue: _selectedType,
-                dropdownColor: const Color(0xFF222228),
-                style: const TextStyle(color: Colors.white, fontSize: 14),
-                decoration: InputDecoration(
-                  labelText: 'Document Category',
-                  labelStyle: const TextStyle(color: Colors.white60),
-                  prefixIcon: const Icon(Icons.category, color: Colors.amberAccent, size: 20),
-                  filled: true,
-                  fillColor: const Color(0xFF222228),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
-                  ),
-                ),
-                items: DocumentType.values.map((type) {
-                  return DropdownMenuItem<DocumentType>(
-                    value: type,
-                    child: Text(type.label),
-                  );
-                }).toList(),
-                onChanged: (val) {
-                  if (val != null) {
-                    setState(() => _selectedType = val);
-                  }
-                },
-              ),
-              const SizedBox(height: 12),
-
-              // Policy / Reference No (Fully Editable)
-              TextField(
-                controller: _policyController,
-                style: const TextStyle(color: Colors.white, fontSize: 14),
-                decoration: InputDecoration(
-                  labelText: 'Policy / Reference No (Optional)',
-                  labelStyle: const TextStyle(color: Colors.white60),
-                  prefixIcon: const Icon(Icons.tag, color: Colors.amberAccent, size: 20),
-                  filled: true,
-                  fillColor: const Color(0xFF222228),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-
-              // Expiry Date Picker (Fully Editable)
-              InkWell(
-                onTap: () async {
-                  final picked = await showDatePicker(
-                    context: context,
-                    initialDate: _selectedExpiry ?? DateTime.now().add(const Duration(days: 365)),
-                    firstDate: DateTime(2020),
-                    lastDate: DateTime(2045),
-                    builder: (pickerContext, child) => Theme(
-                      data: ThemeData.dark().copyWith(
-                        colorScheme: const ColorScheme.dark(
-                          primary: Colors.amberAccent,
-                          onPrimary: Colors.black,
-                          surface: Color(0xFF1E1E24),
-                          onSurface: Colors.white,
-                        ),
-                      ),
-                      child: child!,
-                    ),
-                  );
-                  if (picked != null) {
-                    setState(() => _selectedExpiry = picked);
-                  }
-                },
-                borderRadius: BorderRadius.circular(12),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF222228),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+              items: DocumentType.values.map((type) {
+                return DropdownMenuItem<DocumentType?>(
+                  value: type,
                   child: Row(
                     children: [
-                      const Icon(Icons.calendar_today, color: Colors.amberAccent, size: 20),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Expiry Date',
-                              style: TextStyle(color: Colors.white60, fontSize: 11),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              _selectedExpiry != null
-                                  ? DateFormat.yMMMd().format(_selectedExpiry!)
-                                  : 'No Expiration',
-                              style: const TextStyle(color: Colors.white, fontSize: 14),
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (_selectedExpiry != null)
-                        IconButton(
-                          icon: const Icon(Icons.clear, color: Colors.white54, size: 18),
-                          onPressed: () => setState(() => _selectedExpiry = null),
-                        ),
+                      Icon(type.icon, size: 18, color: LiquidGlassTheme.accentAmber),
+                      const SizedBox(width: 10),
+                      Text(type.label, style: TextStyle(color: textColor)),
                     ],
                   ),
+                );
+              }).toList(),
+              onChanged: (val) {
+                setState(() {
+                  _selectedType = val;
+                  _validationError = null;
+                });
+              },
+            ),
+            const SizedBox(height: 12),
+
+            // Policy / Reference No (Optional & Fully Editable)
+            TextField(
+              controller: _policyController,
+              style: TextStyle(color: textColor, fontSize: 14),
+              decoration: LiquidGlassTheme.fieldDecoration(
+                context: context,
+                isLiquidGlass: isLiquidGlass,
+                labelText: 'Policy / Reference No (Optional)',
+                hintText: 'e.g. POL-99281',
+                prefixIcon: const Icon(Icons.tag, color: LiquidGlassTheme.accentAmber, size: 20),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // Expiry Date Picker (Fully Editable)
+            InkWell(
+              onTap: () async {
+                final picked = await showDatePicker(
+                  context: context,
+                  initialDate: _selectedExpiry ?? DateTime.now().add(const Duration(days: 365)),
+                  firstDate: DateTime(2020),
+                  lastDate: DateTime(2045),
+                  builder: (pickerContext, child) => Theme(
+                    data: (isLiquidGlass || isDark ? ThemeData.dark() : ThemeData.light()).copyWith(
+                      colorScheme: ColorScheme.fromSeed(
+                        seedColor: LiquidGlassTheme.accentAmber,
+                        brightness: (isLiquidGlass || isDark) ? Brightness.dark : Brightness.light,
+                        primary: LiquidGlassTheme.accentAmber,
+                      ),
+                    ),
+                    child: child!,
+                  ),
+                );
+                if (picked != null) {
+                  setState(() => _selectedExpiry = picked);
+                }
+              },
+              borderRadius: BorderRadius.circular(16),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                decoration: BoxDecoration(
+                  color: isLiquidGlass
+                      ? const Color(0x1FFFFFFF)
+                      : (isDark ? const Color(0xFF1B2230) : const Color(0xFFF1F5F9)),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: isLiquidGlass
+                        ? const Color(0x33FFFFFF)
+                        : (isDark ? const Color(0xFF2B3548) : const Color(0xFFCBD5E1)),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.calendar_today, color: LiquidGlassTheme.accentAmber, size: 20),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Expiry Date',
+                            style: TextStyle(
+                              color: subTextColor,
+                              fontSize: 11,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _selectedExpiry != null
+                                ? DateFormat.yMMMd().format(_selectedExpiry!)
+                                : 'No Expiration',
+                            style: TextStyle(
+                              color: textColor,
+                              fontSize: 14,
+                              fontWeight: _selectedExpiry != null ? FontWeight.w600 : FontWeight.normal,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (_selectedExpiry != null)
+                      IconButton(
+                        icon: Icon(Icons.clear, color: subTextColor, size: 18),
+                        onPressed: () => setState(() => _selectedExpiry = null),
+                      ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 20),
+            ),
+            const SizedBox(height: 16),
 
-              // Save Button
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.amberAccent,
-                    foregroundColor: Colors.black87,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  onPressed: _isSaving ? null : _handleSave,
-                  icon: _isSaving
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black87),
-                        )
-                      : const Icon(Icons.lock_outline, size: 20),
-                  label: Text(
-                    _isSaving ? 'Encrypting & Saving...' : 'Secure & Save to Vault',
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                  ),
+            // In-Sheet Error Message (Shown in front of the window)
+            if (_validationError != null) ...[
+              Container(
+                margin: const EdgeInsets.only(bottom: 14),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEF4444).withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFEF4444).withValues(alpha: 0.55), width: 1.2),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.error_outline_rounded, color: Color(0xFFEF4444), size: 20),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        _validationError!,
+                        style: const TextStyle(
+                          color: Color(0xFFFCA5A5),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    InkWell(
+                      onTap: () => setState(() => _validationError = null),
+                      child: const Padding(
+                        padding: EdgeInsets.all(4.0),
+                        child: Icon(Icons.close, color: Colors.white60, size: 16),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
-          ),
+
+            // Save Button
+            SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: LiquidGlassTheme.accentAmber,
+                  foregroundColor: const Color(0xFF0F172A),
+                  elevation: isLiquidGlass ? 4 : 2,
+                  shadowColor: LiquidGlassTheme.accentAmber.withValues(alpha: 0.4),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+                onPressed: _isSaving ? null : _handleSave,
+                icon: _isSaving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF0F172A)),
+                      )
+                    : const Icon(Icons.lock_outline, size: 20),
+                label: Text(
+                  _isSaving ? 'Encrypting & Saving...' : 'Secure & Save to Vault',
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
+
+    if (isLiquidGlass) {
+      sheetBody = ClipRRect(
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 25, sigmaY: 25),
+          child: sheetBody,
+        ),
+      );
+    }
+
+    return Padding(
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
+      child: sheetBody,
+    );
   }
 
-  /// Builds either the Gemini AI loading shimmer, success banner, or manual prompt box.
-  Widget _buildGeminiStatusBox() {
+  /// Builds the Gemini AI loading, success banner, or manual entry prompt box
+  Widget _buildGeminiStatusBox(bool isLiquidGlass, bool isDark) {
     if (_isGeminiAnalyzing) {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
           color: const Color(0xFF1E293B).withValues(alpha: 0.6),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFF38BDF8).withValues(alpha: 0.3)),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFF38BDF8).withValues(alpha: 0.35)),
         ),
         child: const Row(
           children: [
@@ -515,9 +618,9 @@ class _ImportDocumentMetadataSheetState
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
-          color: Colors.green.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.greenAccent.withValues(alpha: 0.35)),
+          color: Colors.green.withValues(alpha: 0.14),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.greenAccent.withValues(alpha: 0.4)),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -540,7 +643,10 @@ class _ImportDocumentMetadataSheetState
                   Text(
                     _geminiStatusMessage ??
                         'Details extracted automatically. You can edit any field below.',
-                    style: const TextStyle(color: Colors.white70, fontSize: 11),
+                    style: TextStyle(
+                      color: isDark ? Colors.white70 : const Color(0xFF334155),
+                      fontSize: 11,
+                    ),
                   ),
                 ],
               ),
@@ -556,19 +662,19 @@ class _ImportDocumentMetadataSheetState
             _geminiStatusMessage!.contains('AIzaSy'));
 
     final boxColor = isKeyError
-        ? Colors.redAccent.withValues(alpha: 0.12)
+        ? Colors.redAccent.withValues(alpha: 0.14)
         : Colors.amber.withValues(alpha: 0.12);
     final borderColor = isKeyError
-        ? Colors.redAccent.withValues(alpha: 0.4)
+        ? Colors.redAccent.withValues(alpha: 0.45)
         : Colors.amberAccent.withValues(alpha: 0.4);
-    final iconColor = isKeyError ? Colors.redAccent : Colors.amberAccent;
+    final iconColor = isKeyError ? Colors.redAccent : LiquidGlassTheme.accentAmber;
     final titleText = isKeyError ? 'Gemini API Key Issue' : 'Manual Entry Required';
 
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: boxColor,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: borderColor, width: 1.2),
       ),
       child: Row(
@@ -596,7 +702,11 @@ class _ImportDocumentMetadataSheetState
                 Text(
                   _geminiStatusMessage ??
                       'Gemini AI could not detect document details. Please enter the vehicle and document details manually below.',
-                  style: const TextStyle(color: Colors.white70, fontSize: 11, height: 1.3),
+                  style: TextStyle(
+                    color: isDark ? Colors.white70 : const Color(0xFF334155),
+                    fontSize: 11,
+                    height: 1.3,
+                  ),
                 ),
               ],
             ),

@@ -63,26 +63,29 @@ class LocalNotificationEngine {
 
         final notificationId = _generateNotificationId(documentId, offset.inDays);
 
-        await _notifications.zonedSchedule(
-          notificationId,
-          'Vehicle Document Expiring: $title',
-          '$vehicleRegNo validity ends in ${offset.inDays} day(s). Tap to review renewal.',
-          tzScheduledTime,
-          const NotificationDetails(
-            android: AndroidNotificationDetails(
-              'vehicle_doc_expiry_channel',
-              'Vehicle Document Expiry Alerts',
-              channelDescription: 'Scheduled reminders for vehicle insurance and revenue license renewals',
-              importance: Importance.high,
-              priority: Priority.high,
+        try {
+          await _notifications.zonedSchedule(
+            notificationId,
+            'Vehicle Document Expiring: $title',
+            '$vehicleRegNo validity ends in ${offset.inDays} day(s). Tap to review renewal.',
+            tzScheduledTime,
+            const NotificationDetails(
+              android: AndroidNotificationDetails(
+                'vehicle_doc_expiry_channel',
+                'Vehicle Document Expiry Alerts',
+                channelDescription: 'Scheduled reminders for vehicle insurance and revenue license renewals',
+                importance: Importance.high,
+                priority: Priority.high,
+              ),
+              iOS: DarwinNotificationDetails(),
             ),
-            iOS: DarwinNotificationDetails(),
-          ),
-          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-          uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
-        );
-
-        developer.log('Scheduled expiry notification $notificationId for $tzScheduledTime');
+            androidScheduleMode: AndroidScheduleMode.inexact,
+            uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+          );
+          developer.log('Scheduled expiry notification $notificationId for $tzScheduledTime');
+        } catch (e) {
+          developer.log('Could not schedule notification $notificationId (inexact fallback): $e');
+        }
       }
     }
   }

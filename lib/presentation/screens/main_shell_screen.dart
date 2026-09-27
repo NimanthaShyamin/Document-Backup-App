@@ -19,10 +19,13 @@ class MainShellScreen extends ConsumerStatefulWidget {
 
 class _MainShellScreenState extends ConsumerState<MainShellScreen> {
   int _currentIndex = 0;
+  late final PageController _pageController;
+  final List<int> _tabHistory = [0];
 
   @override
   void initState() {
     super.initState();
+    _pageController = PageController(initialPage: _currentIndex);
     // Reconcile delta and silent auth in background on startup
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(googleAuthServiceProvider).signInSilently();
@@ -30,8 +33,27 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
     });
   }
 
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
   void _onTabSelected(int index) {
     if (_currentIndex != index) {
+      _tabHistory.add(index);
+      setState(() => _currentIndex = index);
+      _pageController.animateToPage(
+        index,
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeInOutCubic,
+      );
+    }
+  }
+
+  void _onPageChanged(int index) {
+    if (_currentIndex != index) {
+      _tabHistory.add(index);
       setState(() => _currentIndex = index);
     }
   }
@@ -53,20 +75,38 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
       const SettingsScreen(),
     ];
 
-    return Scaffold(
-      extendBody: true,
-      body: LiquidGlassBackground(
-        isLiquidGlass: isLiquidGlass,
-        child: IndexedStack(
-          index: _currentIndex,
-          children: screens,
+    return PopScope(
+      canPop: _tabHistory.length <= 1,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        if (_tabHistory.length > 1) {
+          _tabHistory.removeLast();
+          final prevIndex = _tabHistory.last;
+          setState(() => _currentIndex = prevIndex);
+          _pageController.animateToPage(
+            prevIndex,
+            duration: const Duration(milliseconds: 320),
+            curve: Curves.easeInOutCubic,
+          );
+        }
+      },
+      child: Scaffold(
+        extendBody: true,
+        body: LiquidGlassBackground(
+          isLiquidGlass: isLiquidGlass,
+          child: PageView(
+            controller: _pageController,
+            onPageChanged: _onPageChanged,
+            physics: const BouncingScrollPhysics(),
+            children: screens,
+          ),
         ),
-      ),
-      bottomNavigationBar: _buildFloatingDock(
-        context: context,
-        isLiquidGlass: isLiquidGlass,
-        language: language,
-        isDark: isDark,
+        bottomNavigationBar: _buildFloatingDock(
+          context: context,
+          isLiquidGlass: isLiquidGlass,
+          language: language,
+          isDark: isDark,
+        ),
       ),
     );
   }

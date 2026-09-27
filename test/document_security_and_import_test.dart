@@ -321,15 +321,23 @@ void main() {
       expect(find.textContaining('Gemini could not detect details from this document'), findsOneWidget);
 
       // Verify all fields are editable TextFields
-      final titleField = find.widgetWithText(TextField, 'Document Title');
+      final titleField = find.widgetWithText(TextField, 'Document Title *');
       expect(titleField, findsOneWidget);
+
+      // Verify category selector has empty hint
+      expect(find.text('Select Document Category'), findsOneWidget);
+
+      // Tap Save with empty fields -> should show in-sheet error in front of window
+      await tester.tap(find.text('Secure & Save to Vault'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Document Title, Vehicle Reg No, and Category are required.'), findsOneWidget);
 
       // User enters manual details
       await tester.enterText(titleField, 'Manually Entered Insurance');
       await tester.pumpAndSettle();
 
       expect(find.text('Manually Entered Insurance'), findsOneWidget);
-      expect(find.text('Secure & Save to Vault'), findsOneWidget);
     });
 
     testWidgets('When Gemini detects details, fields are auto-filled and still editable', (tester) async {
