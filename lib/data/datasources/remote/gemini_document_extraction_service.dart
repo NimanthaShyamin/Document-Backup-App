@@ -52,8 +52,8 @@ class ExtractedDocumentDetails {
 /// (.pdf, .png, .jpg, .jpeg) and automatically extract vehicle registration number, title,
 /// category, policy number, and expiry date.
 class GeminiDocumentExtractionService {
-  /// Default model used for high-speed, cost-effective multimodal extraction
-  static const String defaultModelName = 'gemini-1.5-flash';
+  /// Cached model name that was verified to work on the user's project/account
+  static String? _cachedWorkingModel;
 
   final String? apiKey;
 
@@ -75,6 +75,67 @@ class GeminiDocumentExtractionService {
       default:
         return 'application/octet-stream';
     }
+  }
+
+  /// Discovers available Gemini models for this API key or returns a prioritized fallback list.
+  Future<List<String>> _getAvailableModels(String effectiveKey) async {
+    final candidates = <String>[];
+    if (_cachedWorkingModel != null) {
+      candidates.add(_cachedWorkingModel!);
+    }
+
+    try {
+      final listUrl = Uri.parse('https://generativelanguage.googleapis.com/v1beta/models?key=$effectiveKey');
+      final res = await http.get(listUrl).timeout(const Duration(seconds: 4));
+      if (res.statusCode == 200) {
+        final Map<String, dynamic> body = jsonDecode(res.body);
+        final models = body['models'] as List?;
+        if (models != null) {
+          final discovered = <String>[];
+          for (final m in models) {
+            final name = m['name'] as String?;
+            final methods = (m['supportedGenerationMethods'] as List?)?.cast<String>() ?? [];
+            if (name != null && methods.contains('generateContent')) {
+              final clean = name.startsWith('models/') ? name.substring(7) : name;
+              discovered.add(clean);
+            }
+          }
+          if (discovered.isNotEmpty) {
+            discovered.sort((a, b) {
+              final aFlash = a.toLowerCase().contains('flash');
+              final bFlash = b.toLowerCase().contains('flash');
+              if (aFlash && !bFlash) return -1;
+              if (!aFlash && bFlash) return 1;
+              return b.compareTo(a);
+            });
+            for (final m in discovered) {
+              if (!candidates.contains(m)) {
+                candidates.add(m);
+              }
+            }
+            return candidates;
+          }
+        }
+      }
+    } catch (e) {
+      developer.log('[GeminiExtractionService] Model discovery query failed: $e');
+    }
+
+    const defaultFallbacks = [
+      'gemini-2.5-flash',
+      'gemini-2.0-flash',
+      'gemini-1.5-flash-latest',
+      'gemini-2.0-flash-exp',
+      'gemini-2.5-flash-lite',
+      'gemini-1.5-pro',
+      'gemini-1.5-flash',
+    ];
+    for (final m in defaultFallbacks) {
+      if (!candidates.contains(m)) {
+        candidates.add(m);
+      }
+    }
+    return candidates;
   }
 
   /// Analyzes the given document file using Gemini AI and returns extracted metadata.
@@ -111,66 +172,99 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
 }
 ''';
 
-      // 1. Try with official Google Generative AI SDK (with 15s timeout)
-      try {
-        final model = GenerativeModel(
-          model: defaultModelName,
-          apiKey: effectiveKey,
-          generationConfig: GenerationConfig(
-            responseMimeType: 'application/json',
-            temperature: 0.1,
-          ),
-        );
+      final candidateModels = await _getAvailableModels(effectiveKey);
+      String lastErrorMsg = 'Failed to analyze document with available Gemini models.';
 
-        final content = [
-          Content.multi([
-            TextPart(prompt),
-            DataPart(mimeType, bytes),
-          ]),
-        ];
+      for (final modelName in candidateModels) {
+        developer.log('[GeminiExtractionService] Attempting extraction with model: $modelName');
 
-        final response = await model.generateContent(content).timeout(
-          const Duration(seconds: 15),
-          onTimeout: () => throw TimeoutException('Gemini AI request timed out after 15 seconds.'),
-        );
-        final responseText = response.text;
-
-        if (responseText != null && responseText.trim().isNotEmpty) {
-          final parsed = _parseJsonDetails(responseText);
-          if (parsed != null) return parsed;
-        }
-      } catch (sdkError) {
-        developer.log('[GeminiExtractionService] SDK call failed, trying direct REST fallback: $sdkError');
-        final sdkErrorStr = sdkError.toString();
-        if (sdkErrorStr.contains('API key not valid') || sdkErrorStr.contains('API_KEY_INVALID')) {
-          return ExtractedDocumentDetails.error(
-            'Invalid API Key: Google Gemini rejected this key. Please check your key in Settings (Gemini keys start with "AIzaSy...").',
+        // 1. Try with official Google Generative AI SDK
+        try {
+          final model = GenerativeModel(
+            model: modelName,
+            apiKey: effectiveKey,
+            generationConfig: GenerationConfig(
+              responseMimeType: 'application/json',
+              temperature: 0.1,
+            ),
           );
+
+          final content = [
+            Content.multi([
+              TextPart(prompt),
+              DataPart(mimeType, bytes),
+            ]),
+          ];
+
+          final response = await model.generateContent(content).timeout(
+            const Duration(seconds: 15),
+            onTimeout: () => throw TimeoutException('Gemini AI request timed out after 15 seconds.'),
+          );
+          final responseText = response.text;
+
+          if (responseText != null && responseText.trim().isNotEmpty) {
+            final parsed = _parseJsonDetails(responseText);
+            if (parsed != null) {
+              _cachedWorkingModel = modelName;
+              return parsed;
+            }
+          }
+        } catch (sdkError) {
+          final sdkErrorStr = sdkError.toString();
+          developer.log('[GeminiExtractionService] SDK error for $modelName: $sdkErrorStr');
+
+          if (sdkErrorStr.contains('API key not valid') || sdkErrorStr.contains('API_KEY_INVALID')) {
+            return ExtractedDocumentDetails.error(
+              'Invalid API Key: Google Gemini rejected this key. Please check your key in Settings (Gemini keys start with "AIzaSy...").',
+            );
+          }
+
+          final isNotFound = sdkErrorStr.contains('NOT_FOUND') ||
+              sdkErrorStr.contains('not found') ||
+              sdkErrorStr.contains('not supported for generateContent');
+
+          if (!isNotFound) {
+            lastErrorMsg = sdkErrorStr;
+          }
+
+          // 2. Direct REST fallback for this model
+          final restResult = await _restApiFallback(
+            apiKey: effectiveKey,
+            modelName: modelName,
+            mimeType: mimeType,
+            bytes: bytes,
+            prompt: prompt,
+          );
+
+          if (restResult != null) {
+            if (restResult.errorMessage != null) {
+              if (restResult.errorMessage!.contains('API_KEY_INVALID')) {
+                return restResult;
+              }
+              if (restResult.errorMessage!.contains('NOT_FOUND') ||
+                  restResult.errorMessage!.contains('not found')) {
+                // Model not found in REST either, proceed to next candidate model
+                continue;
+              }
+              lastErrorMsg = restResult.errorMessage!;
+            } else {
+              _cachedWorkingModel = modelName;
+              return restResult;
+            }
+          }
         }
-
-        // 2. Direct REST fallback
-        final restResult = await _restApiFallback(
-          apiKey: effectiveKey,
-          mimeType: mimeType,
-          bytes: bytes,
-          prompt: prompt,
-        );
-        if (restResult != null) return restResult;
-
-        return ExtractedDocumentDetails.error(
-          'Gemini scanning failed: $sdkErrorStr',
-        );
       }
+
+      return ExtractedDocumentDetails.error(lastErrorMsg);
     } catch (e, stack) {
       developer.log('[GeminiExtractionService] Extraction error: $e', error: e, stackTrace: stack);
       return ExtractedDocumentDetails.error('Document analysis error: $e');
     }
-
-    return ExtractedDocumentDetails.empty();
   }
 
   Future<ExtractedDocumentDetails?> _restApiFallback({
     required String apiKey,
+    required String modelName,
     required String mimeType,
     required List<int> bytes,
     required String prompt,
@@ -178,7 +272,7 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
     try {
       final base64Data = base64Encode(bytes);
       final url = Uri.parse(
-        'https://generativelanguage.googleapis.com/v1beta/models/$defaultModelName:generateContent?key=$apiKey',
+        'https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent?key=$apiKey',
       );
 
       final payload = {
