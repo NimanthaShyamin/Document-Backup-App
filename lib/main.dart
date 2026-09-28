@@ -99,11 +99,11 @@ class VehicleDocumentVaultApp extends ConsumerWidget {
       themeMode: themeMode,
       theme: ThemeData(
         brightness: Brightness.light,
-        scaffoldBackgroundColor: const Color(0xFFF6F8FB),
+        scaffoldBackgroundColor: const Color(0xFFFFFFFF),
         primaryColor: const Color(0xFF2563EB),
         colorScheme: const ColorScheme.light(
           primary: Color(0xFF2563EB),
-          secondary: Color(0xFFFFD13B),
+          secondary: Color(0xFF38BDF8),
           surface: Color(0xFFFFFFFF),
         ),
         appBarTheme: const AppBarTheme(
@@ -115,12 +115,12 @@ class VehicleDocumentVaultApp extends ConsumerWidget {
       ),
       darkTheme: ThemeData(
         brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF121214),
-        primaryColor: Colors.amberAccent,
+        scaffoldBackgroundColor: const Color(0xFF03061A),
+        primaryColor: const Color(0xFF38BDF8),
         colorScheme: const ColorScheme.dark(
-          primary: Colors.amberAccent,
-          secondary: Colors.amber,
-          surface: Color(0xFF1E1E24),
+          primary: Color(0xFF38BDF8),
+          secondary: Color(0xFF2563EB),
+          surface: Color(0xFF0C1338),
         ),
         appBarTheme: const AppBarTheme(
           backgroundColor: Colors.transparent,

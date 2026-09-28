@@ -39,6 +39,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   static const List<String> _allowedExtensions = ['pdf', 'png', 'jpg', 'jpeg'];
   bool _isStatsExpanded = true;
   bool _isImporting = false;
+  bool _isSearchVisible = false;
 
   @override
   void dispose() {
@@ -68,12 +69,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             Container(
               padding: const EdgeInsets.all(7),
               decoration: BoxDecoration(
-                color: LiquidGlassTheme.accentAmber.withValues(alpha: 0.18),
+                color: isDark
+                    ? LiquidGlassTheme.accentElectricBlue.withValues(alpha: 0.18)
+                    : const Color(0xFF2563EB).withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.directions_car_filled,
-                color: LiquidGlassTheme.accentAmber,
+                color: isDark ? LiquidGlassTheme.accentElectricBlue : const Color(0xFF2563EB),
                 size: 20,
               ),
             ),
@@ -92,13 +95,34 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ],
         ),
         actions: [
+          // Search Toggle Button
+          IconButton(
+            tooltip: _isSearchVisible ? 'Close Search' : 'Search Documents (or swipe down)',
+            icon: Icon(
+              _isSearchVisible ? Icons.search_off : Icons.search,
+              size: 22,
+              color: _isSearchVisible ? (isDark ? LiquidGlassTheme.accentElectricBlue : const Color(0xFF2563EB)) : (isDark ? Colors.white70 : Colors.black54),
+            ),
+            onPressed: () {
+              setState(() => _isSearchVisible = !_isSearchVisible);
+              if (_isSearchVisible) {
+                Future.delayed(const Duration(milliseconds: 150), () => _searchFocusNode.requestFocus());
+              } else {
+                _searchFocusNode.unfocus();
+                _searchController.clear();
+                setState(() => _searchQuery = '');
+              }
+            },
+          ),
           // Toggle mechanism for collapsible statistics header
           IconButton(
             tooltip: _isStatsExpanded ? 'Hide Statistics' : 'Show Statistics',
             icon: Icon(
               _isStatsExpanded ? Icons.bar_chart : Icons.bar_chart_outlined,
               size: 22,
-              color: _isStatsExpanded ? LiquidGlassTheme.accentAmber : (isDark ? Colors.white70 : Colors.black54),
+              color: _isStatsExpanded
+                  ? (isDark ? LiquidGlassTheme.accentElectricBlue : const Color(0xFF2563EB))
+                  : (isDark ? Colors.white70 : Colors.black54),
             ),
             onPressed: () => setState(() => _isStatsExpanded = !_isStatsExpanded),
           ),
@@ -165,22 +189,28 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               Expanded(
                 child: NotificationListener<ScrollNotification>(
                   onNotification: (scrollNotification) {
-                    if (scrollNotification is OverscrollNotification && scrollNotification.overscroll < -8) {
-                      if (!_searchFocusNode.hasFocus) {
-                        _searchFocusNode.requestFocus();
+                    if (scrollNotification is OverscrollNotification && scrollNotification.overscroll < -10) {
+                      if (!_isSearchVisible) {
+                        setState(() => _isSearchVisible = true);
+                        Future.delayed(const Duration(milliseconds: 150), () {
+                          _searchFocusNode.requestFocus();
+                        });
                       }
                     } else if (scrollNotification is ScrollUpdateNotification) {
                       if (scrollNotification.metrics.pixels <= 0 &&
-                          (scrollNotification.scrollDelta ?? 0) < -8) {
-                        if (!_searchFocusNode.hasFocus) {
-                          _searchFocusNode.requestFocus();
+                          (scrollNotification.scrollDelta ?? 0) < -10) {
+                        if (!_isSearchVisible) {
+                          setState(() => _isSearchVisible = true);
+                          Future.delayed(const Duration(milliseconds: 150), () {
+                            _searchFocusNode.requestFocus();
+                          });
                         }
                       }
                     }
                     return false;
                   },
                   child: RefreshIndicator(
-                    color: LiquidGlassTheme.accentAmber,
+                    color: isDark ? LiquidGlassTheme.accentElectricBlue : const Color(0xFF2563EB),
                     onRefresh: () async {
                       await ref.read(syncQueueRepositoryProvider).reconcileStartupDelta();
                     },
@@ -194,9 +224,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         _buildSyncStatusBar(syncStateAsync.value, isLiquidGlass, language),
                         const SizedBox(height: 14),
 
-                        // Search Field
-                        _buildSearchBar(isLiquidGlass, language, isDark),
-                        const SizedBox(height: 18),
+                        // Search Field: Appears only on swipe down or search button
+                        AnimatedSize(
+                          duration: const Duration(milliseconds: 250),
+                          curve: Curves.easeInOutCubic,
+                          child: _isSearchVisible
+                              ? Padding(
+                                  padding: const EdgeInsets.only(bottom: 16.0),
+                                  child: _buildSearchBar(isLiquidGlass, language, isDark),
+                                )
+                              : const SizedBox.shrink(),
+                        ),
 
                         if (realDocs.isEmpty) ...[
                           _buildEmptyState(isLiquidGlass, language, isDark),
@@ -388,15 +426,31 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             fontSize: 13,
           ),
           border: InputBorder.none,
-          suffixIcon: _searchQuery.isNotEmpty
-              ? IconButton(
+          suffixIcon: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_searchQuery.isNotEmpty)
+                IconButton(
                   icon: const Icon(Icons.clear, size: 16),
                   onPressed: () {
                     _searchController.clear();
                     setState(() => _searchQuery = '');
                   },
-                )
-              : null,
+                ),
+              IconButton(
+                icon: const Icon(Icons.keyboard_arrow_up, size: 20),
+                tooltip: 'Hide Search Bar',
+                onPressed: () {
+                  _searchFocusNode.unfocus();
+                  _searchController.clear();
+                  setState(() {
+                    _isSearchVisible = false;
+                    _searchQuery = '';
+                  });
+                },
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -443,7 +497,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               // Category Header
               Row(
                 children: [
-                  Icon(type.icon, size: 18, color: LiquidGlassTheme.accentAmber),
+                  Icon(
+                    type.icon,
+                    size: 18,
+                    color: isDark ? LiquidGlassTheme.accentElectricBlue : const Color(0xFF2563EB),
+                  ),
                   const SizedBox(width: 8),
                   Text(
                     typeLabel,
@@ -457,13 +515,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                     decoration: BoxDecoration(
-                      color: LiquidGlassTheme.accentAmber.withValues(alpha: 0.18),
+                      color: isDark
+                          ? LiquidGlassTheme.accentElectricBlue.withValues(alpha: 0.18)
+                          : const Color(0xFF2563EB).withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
                       '${categoryDocs.length}',
-                      style: const TextStyle(
-                        color: LiquidGlassTheme.accentAmber,
+                      style: TextStyle(
+                        color: isDark ? LiquidGlassTheme.accentElectricBlue : const Color(0xFF2563EB),
                         fontSize: 10,
                         fontWeight: FontWeight.bold,
                       ),
@@ -525,12 +585,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: isDark ? Colors.black38 : const Color(0xFFF1F5F9),
+              color: isDark ? const Color(0xFF141F48) : const Color(0xFFEFF6FF),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(
               doc.documentType.icon,
-              color: LiquidGlassTheme.accentAmber,
+              color: isDark ? LiquidGlassTheme.accentElectricBlue : const Color(0xFF2563EB),
               size: 24,
             ),
           ),
