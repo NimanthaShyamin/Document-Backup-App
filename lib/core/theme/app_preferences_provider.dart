@@ -202,3 +202,6 @@ class GeminiApiKeyNotifier extends StateNotifier<String> {
 final geminiApiKeyProvider = StateNotifierProvider<GeminiApiKeyNotifier, String>((ref) {
   return GeminiApiKeyNotifier();
 });
+
+/// Transient provider controlling search bar visibility (triggered by dock swipe-down).
+final searchVisibleProvider = StateProvider<bool>((ref) => false);

@@ -40,14 +40,14 @@ class AppStrings {
 
     // App Bar & Branding
     'app_title': {
-      AppLanguage.english: 'Vehicle Document Vault',
-      AppLanguage.sinhala: 'වාහන ලේඛන සුරක්ෂිතාගාරය',
-      AppLanguage.singlish: 'වෙහිකල් ඩොකියුමන්ට් වෝල්ට්',
+      AppLanguage.english: 'Document Vault',
+      AppLanguage.sinhala: 'ලේඛන සුරක්ෂිතාගාරය',
+      AppLanguage.singlish: 'ඩොකියුමන්ට් වෝල්ට්',
     },
     'app_subtitle': {
-      AppLanguage.english: 'Secure Personal Vault with Google Drive AppData Backup',
-      AppLanguage.sinhala: 'Google Drive AppData සමඟ සුරක්ෂිත පුද්ගලික ලේඛන ගබඩාව',
-      AppLanguage.singlish: 'ගූගල් ඩ්‍රයිව් ඇප්ඩේටා බ්ලැක්අප් සහිත සෙකියුර් වෝල්ට් එක',
+      AppLanguage.english: 'Secure Personal Vault with Google Drive Backup',
+      AppLanguage.sinhala: 'Google Drive සමඟ සුරක්ෂිත පුද්ගලික ලේඛන ගබඩාව',
+      AppLanguage.singlish: 'ගූගල් ඩ්‍රයිව් බ්ලැක්අප් සහිත සෙකියුර් වෝල්ට් එක',
     },
 
     // Settings Profile Card

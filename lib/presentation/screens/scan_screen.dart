@@ -62,11 +62,12 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
   Future<void> _handleSaveDocument() async {
     final regNo = _regNoController.text.trim();
     final title = _titleController.text.trim();
+    final effectiveRegNo = regNo.isNotEmpty ? regNo : 'General';
 
-    if (regNo.isEmpty || title.isEmpty) {
+    if (title.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Please enter Vehicle Reg No and Document Title.'),
+          content: Text('Please enter Document Title.'),
           backgroundColor: Colors.redAccent,
         ),
       );
@@ -79,8 +80,8 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
       final tempDir = await getTemporaryDirectory();
       final sampleFile = File('${tempDir.path}/scan_${DateTime.now().millisecondsSinceEpoch}.txt');
       await sampleFile.writeAsString(
-        'VEHICLE DOCUMENT VAULT ENCRYPTED CERTIFICATE\n'
-        'Vehicle Reg No: $regNo\n'
+        'SECURE VAULT ENCRYPTED CERTIFICATE\n'
+        'Reference/ID: $effectiveRegNo\n'
         'Title: $title\n'
         'Category: ${_selectedType.label}\n'
         'Ref/Policy: ${_policyNoController.text.trim()}\n'
@@ -93,7 +94,7 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
       await repo.saveDocument(
         documentType: _selectedType,
         title: title,
-        vehicleRegNo: regNo,
+        vehicleRegNo: effectiveRegNo,
         policyNo: _policyNoController.text.trim().isEmpty ? null : _policyNoController.text.trim(),
         expiryDate: _selectedExpiry,
         sourceFile: sampleFile,
@@ -283,11 +284,11 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
                   ),
                   const SizedBox(height: 14),
 
-                  // Reg No Field
+                  // Reg No / Reference Field
                   TextField(
                     controller: _regNoController,
                     decoration: InputDecoration(
-                      labelText: AppStrings.get('veh_reg_no', language),
+                      labelText: 'Reference / Reg / ID No (Optional)',
                       prefixIcon: const Icon(Icons.pin, size: 20),
                       filled: true,
                       fillColor: isDark ? Colors.black26 : const Color(0xFFF1F5F9),

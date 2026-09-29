@@ -331,7 +331,7 @@ void main() {
       await tester.tap(find.text('Secure & Save to Vault'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Document Title, Vehicle Reg No, and Category are required.'), findsOneWidget);
+      expect(find.text('Document Title and Category are required.'), findsOneWidget);
 
       // User enters manual details
       await tester.enterText(titleField, 'Manually Entered Insurance');

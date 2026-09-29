@@ -154,19 +154,19 @@ class GeminiDocumentExtractionService {
       final mimeType = _determineMimeType(file.path);
 
       const prompt = '''
-You are an expert vehicle document scanner and analyzer.
-Analyze this document file and extract the vehicle document details:
-1. vehicleRegNo: The vehicle registration or license plate number (e.g. "WP CAB-1234", "CAB-1234", "19-4821").
-2. title: A descriptive and clean document title (e.g. "Vehicle Revenue License 2026/2027", "Comprehensive Motor Insurance", "National Fuel Pass").
-3. documentType: Exactly one of: "revenue_license", "insurance_card", "fuel_qr", "custom".
-4. policyNo: Policy number or reference number if clearly stated.
-5. expiryDate: Expiry date or valid-until date formatted strictly as "YYYY-MM-DD".
+You are an expert AI document scanner and analyzer.
+Analyze this document file and accurately extract its details:
+1. title: A descriptive and clean document title (e.g. "National Identity Card", "Sri Lanka Driving License", "Qatar Airways E-Ticket", "Comprehensive Motor Insurance", "Vehicle Revenue License", "Electricity Utility Bill").
+2. documentType: Exactly one of: "id_card", "driving_license", "e_ticket", "bill", "certificate", "revenue_license", "insurance_card", "fuel_qr", "custom".
+3. vehicleRegNo: If this is a vehicle document, the vehicle registration or license plate number (e.g. "BCM-6416", "WP CAB-1234"). If it is an ID, license, or ticket, the holder name or reference identifier (or null).
+4. policyNo: Document reference number, NIC number, license number, booking PNR, policy number, or invoice reference.
+5. expiryDate: Expiry date, valid-until date, or travel date formatted strictly as "YYYY-MM-DD" (or null if no expiry).
 
 Return ONLY a valid JSON object without markdown fences, following this exact schema:
 {
-  "vehicleRegNo": "string or null",
   "title": "string or null",
-  "documentType": "revenue_license | insurance_card | fuel_qr | custom | null",
+  "documentType": "id_card | driving_license | e_ticket | bill | certificate | revenue_license | insurance_card | fuel_qr | custom | null",
+  "vehicleRegNo": "string or null",
   "policyNo": "string or null",
   "expiryDate": "YYYY-MM-DD or null"
 }

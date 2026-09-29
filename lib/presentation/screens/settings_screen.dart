@@ -94,7 +94,7 @@ class SettingsScreen extends ConsumerWidget {
     );
   }
 
-  // --- 1. Profile & Preferences Card ---
+  // --- 1. Google-style Profile Card ---
   Widget _buildProfilePreferencesCard(
     BuildContext context,
     WidgetRef ref,
@@ -103,98 +103,252 @@ class SettingsScreen extends ConsumerWidget {
     AppLanguage language,
     bool isDark,
   ) {
+    final hasUser = user != null;
+    final hasPhoto = hasUser && (user.photoUrl != null);
+    final displayName = hasUser ? (user.displayName ?? '') : '';
+    final email = hasUser ? (user.email ?? '') : '';
+    final initials = displayName.isNotEmpty
+        ? displayName.trim().split(' ').map((w) => w.isNotEmpty ? w[0] : '').take(2).join().toUpperCase()
+        : (email.isNotEmpty ? email[0].toUpperCase() : '?');
+
     return LiquidGlassCard(
       isLiquidGlass: isLiquidGlass,
-      padding: const EdgeInsets.all(18),
-      child: Row(
+      padding: EdgeInsets.zero,
+      child: Column(
         children: [
-          // Blue circle icon container as in screenshot
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF2979FF), Color(0xFF1565C0)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFF2979FF).withValues(alpha: 0.35),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
+          // ── Banner + Avatar ────────────────────────────────────────
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              // Gradient banner
+              Container(
+                height: 72,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: isDark
+                        ? [const Color(0xFF1D3DF0), const Color(0xFF6366F1)]
+                        : [const Color(0xFF2563EB), const Color(0xFF6366F1)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
                 ),
-              ],
-            ),
-            child: user != null && user.photoUrl != null
-                ? ClipOval(
-                    child: Image.network(
-                      user.photoUrl!,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => const Icon(
-                        Icons.person,
-                        color: Colors.white,
-                        size: 26,
+                child: Stack(
+                  children: [
+                    // Subtle pattern overlay
+                    Positioned.fill(
+                      child: ClipRRect(
+                        borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
+                        child: Opacity(
+                          opacity: 0.08,
+                          child: GridView.count(
+                            crossAxisCount: 8,
+                            children: List.generate(40,
+                                (_) => const Icon(Icons.circle, color: Colors.white, size: 4)),
+                          ),
+                        ),
                       ),
                     ),
-                  )
-                : const Icon(
-                    Icons.person,
-                    color: Colors.white,
-                    size: 26,
-                  ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  AppStrings.get('profile_and_preferences', language),
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: isDark ? Colors.white : const Color(0xFF0F172A),
-                  ),
+                  ],
                 ),
-                const SizedBox(height: 3),
-                Text(
-                  user != null
-                      ? '${user.displayName ?? user.email}'
-                      : AppStrings.get('profile_subtitle', language),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: isDark ? Colors.white70 : const Color(0xFF64748B),
-                  ),
-                ),
-                if (user != null) ...[
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      Container(
-                        width: 7,
-                        height: 7,
-                        decoration: const BoxDecoration(
-                          color: Colors.greenAccent,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 5),
-                      Text(
-                        AppStrings.get('cloud_connected', language),
-                        style: const TextStyle(
-                          color: Colors.greenAccent,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                        ),
+              ),
+
+              // Avatar — centred, overlapping the banner
+              Positioned(
+                bottom: -30,
+                left: 20,
+                child: Container(
+                  padding: const EdgeInsets.all(3),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: isDark ? const Color(0xFF0C1338) : Colors.white,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.25),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
                       ),
                     ],
                   ),
-                ],
+                  child: Container(
+                    width: 64,
+                    height: 64,
+                    decoration: const BoxDecoration(shape: BoxShape.circle),
+                    child: hasPhoto
+                        ? ClipOval(
+                            child: Image.network(
+                              user.photoUrl!,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) =>
+                                  _buildInitialsAvatar(initials, isDark),
+                            ),
+                          )
+                        : _buildInitialsAvatar(initials, isDark),
+                  ),
+                ),
+              ),
+
+              // Google "G" badge on the avatar
+              if (hasUser)
+                Positioned(
+                  bottom: -30 + 44,
+                  left: 20 + 44,
+                  child: Container(
+                    width: 20,
+                    height: 20,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.2),
+                          blurRadius: 4,
+                        )
+                      ],
+                    ),
+                    child: const Center(
+                      child: Text(
+                        'G',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF4285F4),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+
+          // ── Account info section ────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 38, 16, 16),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        hasUser && displayName.isNotEmpty
+                            ? displayName
+                            : AppStrings.get('profile_and_preferences', language),
+                        style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.bold,
+                          color: isDark ? Colors.white : const Color(0xFF0F172A),
+                        ),
+                      ),
+                      if (hasUser && email.isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          email,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: isDark ? Colors.white54 : const Color(0xFF64748B),
+                          ),
+                        ),
+                      ] else if (!hasUser)
+                        Text(
+                          AppStrings.get('profile_subtitle', language),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: isDark ? Colors.white54 : const Color(0xFF64748B),
+                          ),
+                        ),
+                      const SizedBox(height: 10),
+                      // Status chips
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        children: [
+                          if (hasUser)
+                            _statusChip(
+                              icon: Icons.cloud_done_rounded,
+                              label: 'Google Drive Linked',
+                              color: const Color(0xFF10B981),
+                              isDark: isDark,
+                            )
+                          else
+                            _statusChip(
+                              icon: Icons.cloud_off_rounded,
+                              label: 'Not Signed In',
+                              color: Colors.amberAccent,
+                              isDark: isDark,
+                            ),
+                          _statusChip(
+                            icon: Icons.shield_outlined,
+                            label: 'Vault Secured',
+                            color: const Color(0xFF6366F1),
+                            isDark: isDark,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInitialsAvatar(String initials, bool isDark) {
+    return Container(
+      width: 64,
+      height: 64,
+      decoration: const BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: LinearGradient(
+          colors: [Color(0xFF6366F1), Color(0xFF2563EB)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: Center(
+        child: Text(
+          initials,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 22,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _statusChip({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required bool isDark,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: isDark ? 0.18 : 0.10),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withValues(alpha: 0.4), width: 1),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+              color: color,
             ),
           ),
         ],

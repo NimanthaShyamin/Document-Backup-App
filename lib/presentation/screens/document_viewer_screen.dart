@@ -589,8 +589,18 @@ class _DocumentViewerScreenState extends ConsumerState<DocumentViewerScreen> {
         return 'Motor Insurance Certificate';
       case DocumentType.revenueLicense:
         return 'Annual Revenue License';
+      case DocumentType.idCard:
+        return 'National ID / Passport';
+      case DocumentType.drivingLicense:
+        return 'Driving License';
+      case DocumentType.eTicket:
+        return 'E-Ticket / Booking';
+      case DocumentType.bill:
+        return 'Invoice / Bill';
+      case DocumentType.certificate:
+        return 'Certificate / Medical';
       case DocumentType.custom:
-        return 'Vehicle Document';
+        return 'General Document';
     }
   }
 }

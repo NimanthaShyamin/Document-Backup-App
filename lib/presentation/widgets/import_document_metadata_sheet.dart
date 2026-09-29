@@ -182,16 +182,15 @@ class _ImportDocumentMetadataSheetState
   Future<void> _handleSave() async {
     final title = _titleController.text.trim();
     final regNo = _regNoController.text.trim();
+    final effectiveRegNo = regNo.isNotEmpty ? regNo : 'General';
 
-    // In-sheet validation: Prominently displayed in front of the window
-    if (title.isEmpty || regNo.isEmpty || _selectedType == null) {
+    // In-sheet validation: Only Title and Category required for universal documents
+    if (title.isEmpty || _selectedType == null) {
       setState(() {
-        if (title.isEmpty && regNo.isEmpty && _selectedType == null) {
-          _validationError = 'Document Title, Vehicle Reg No, and Category are required.';
+        if (title.isEmpty && _selectedType == null) {
+          _validationError = 'Document Title and Category are required.';
         } else if (title.isEmpty) {
           _validationError = 'Document Title is required.';
-        } else if (regNo.isEmpty) {
-          _validationError = 'Vehicle Registration No is required.';
         } else {
           _validationError = 'Please select a Document Category.';
         }
@@ -209,7 +208,7 @@ class _ImportDocumentMetadataSheetState
       await repo.saveDocument(
         documentType: _selectedType!,
         title: title,
-        vehicleRegNo: regNo,
+        vehicleRegNo: effectiveRegNo,
         policyNo: _policyController.text.trim().isEmpty ? null : _policyController.text.trim(),
         expiryDate: _selectedExpiry,
         sourceFile: widget.sourceFile,
@@ -346,16 +345,16 @@ class _ImportDocumentMetadataSheetState
             ),
             const SizedBox(height: 12),
 
-            // Vehicle Reg No Field (Required & Fully Editable)
+            // Optional Reference / Reg / ID No Field
             TextField(
               controller: _regNoController,
               style: TextStyle(color: textColor, fontSize: 14),
               decoration: LiquidGlassTheme.fieldDecoration(
                 context: context,
                 isLiquidGlass: isLiquidGlass,
-                labelText: 'Vehicle Registration No *',
-                hintText: 'e.g. WP CAB-1234',
-                prefixIcon: const Icon(Icons.pin, color: LiquidGlassTheme.accentAmber, size: 20),
+                labelText: 'Reference / Reg / ID No (Optional)',
+                hintText: 'e.g. NIC-1234, PNR-998, CAB-1234',
+                prefixIcon: Icon(Icons.tag, color: isDark ? LiquidGlassTheme.accentElectricBlue : const Color(0xFF2563EB), size: 20),
               ),
             ),
             const SizedBox(height: 12),
