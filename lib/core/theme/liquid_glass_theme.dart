@@ -10,6 +10,26 @@ import 'package:flutter/material.dart';
 class LiquidGlassTheme {
   LiquidGlassTheme._();
 
+  // --- Pure Liquid Glass Core Tokens (Matching exact CSS specifications) ---
+  /// --lg-bg-color: rgba(255, 255, 255, 0.25);
+  static const Color lgBgColor = Color(0x40FFFFFF);
+  static const Color lgBgColorDark = Color(0x28FFFFFF);
+
+  /// --lg-highlight: rgba(255, 255, 255, 0.75);
+  static const Color lgHighlight = Color(0xBFFFFFFF);
+
+  /// --lg-text: #ffffff;
+  static const Color lgText = Color(0xFFFFFFFF);
+
+  /// --lg-red: #fb4268; (Active accent color)
+  static const Color lgRed = Color(0xFFFB4268);
+
+  /// --lg-grey: #444739; (Muted inactive navigation color)
+  static const Color lgGrey = Color(0xFF444739);
+
+  /// Active pill background: rgba(0, 0, 0, 0.25);
+  static const Color lgActivePillBg = Color(0x40000000);
+
   // Glass Tint Tokens (Liquid Glass Mode - Screenshot 3)
   static const Color darkGlassBgTop = Color(0x35FFFFFF);
   static const Color darkGlassBgBottom = Color(0x0EFFFFFF);
@@ -43,6 +63,22 @@ class LiquidGlassTheme {
   static const Color accentBlue = Color(0xFF2563EB);
   static const Color accentElectricBlue = Color(0xFF38BDF8);
   static const Color accentCyan = Color(0xFF00E5FF);
+  static const Color accentCoral = Color(0xFFFB4268);
+
+  /// Signature Liquid Glass outer drop shadows:
+  /// box-shadow: 0 6px 6px rgba(0, 0, 0, 0.2), 0 0 20px rgba(0, 0, 0, 0.1);
+  static List<BoxShadow> glassShadows([bool isDark = false]) => [
+        BoxShadow(
+          color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.20),
+          blurRadius: 6,
+          offset: const Offset(0, 6),
+        ),
+        BoxShadow(
+          color: Colors.black.withValues(alpha: isDark ? 0.20 : 0.10),
+          blurRadius: 20,
+          offset: Offset.zero,
+        ),
+      ];
 
   /// Builds a frosted 3D glass box decoration or milk-white / electric-navy decoration based on mode.
   static BoxDecoration glassDecoration({
@@ -125,50 +161,16 @@ class LiquidGlassTheme {
       );
     }
 
-    // Screenshot 3 Style: Apple 3D Pure Liquid Glass (Optical crystal clear, see-through, NOT milky white)
+    // Pure Liquid Glass Style: Exact translucent overlay + specular highlight + double shadow
     return BoxDecoration(
       borderRadius: BorderRadius.circular(radius),
-      gradient: customGradient ??
-          LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            stops: const [0.0, 0.45, 1.0],
-            colors: isDark
-                ? const [
-                    Color(0x28FFFFFF), // Specular light highlight on top-left edge
-                    Color(0x08FFFFFF), // Pure optical crystal glass body
-                    Color(0x14FFFFFF), // Crystal refractive sheen
-                  ]
-                : const [
-                    Color(0x30FFFFFF), // Subtle crystal specular highlight (NOT white paint)
-                    Color(0x0AFFFFFF), // Pure transparent see-through glass body
-                    Color(0x16FFFFFF), // Clear optical glass sheen
-                  ],
-          ),
+      color: customColor ?? (isDark ? lgBgColorDark : lgBgColor),
       border: customBorder ??
           Border.all(
-            color: isDark ? const Color(0x38FFFFFF) : const Color(0x48FFFFFF),
-            width: 1.0,
+            color: lgHighlight.withValues(alpha: isDark ? 0.45 : 0.65),
+            width: 1.2,
           ),
-      boxShadow: customShadows ??
-          [
-            // Soft diffused depth shadow underneath the glass slab
-            BoxShadow(
-              color: isDark
-                  ? Colors.black.withValues(alpha: 0.35)
-                  : const Color(0xFF0F172A).withValues(alpha: 0.08),
-              blurRadius: 20,
-              spreadRadius: -2,
-              offset: const Offset(0, 8),
-            ),
-            // Specular upper-edge highlight reflection
-            BoxShadow(
-              color: Colors.white.withValues(alpha: isDark ? 0.06 : 0.28),
-              blurRadius: 2,
-              spreadRadius: 0,
-              offset: const Offset(0, 1),
-            ),
-          ],
+      boxShadow: customShadows ?? glassShadows(isDark),
     );
   }
 
@@ -326,7 +328,72 @@ class LiquidGlassTheme {
   }
 }
 
-/// Reusable Apple 3D Liquid Glass Surface Container
+/// Renders the specular highlight layer:
+/// box-shadow: inset 1px 1px 0 var(--lg-highlight), inset 0 0 5px var(--lg-highlight);
+class LiquidGlassSpecularPainter extends CustomPainter {
+  final double radius;
+  final Color highlightColor;
+
+  const LiquidGlassSpecularPainter({
+    required this.radius,
+    this.highlightColor = LiquidGlassTheme.lgHighlight,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.isEmpty) return;
+    final rect = Offset.zero & size;
+    final rrect = RRect.fromRectAndRadius(rect, Radius.circular(radius));
+
+    // 1. Inset 1px 1px top-left specular highlight rim
+    final borderPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2
+      ..shader = LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        stops: const [0.0, 0.35, 0.70, 1.0],
+        colors: [
+          highlightColor, // 75% white specular shine
+          highlightColor.withValues(alpha: 0.55),
+          highlightColor.withValues(alpha: 0.15),
+          highlightColor.withValues(alpha: 0.30),
+        ],
+      ).createShader(rect);
+
+    canvas.drawRRect(rrect.deflate(0.6), borderPaint);
+
+    // 2. Inset 0 0 5px soft inner glow
+    final innerGlowPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3.5
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2.5)
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          highlightColor.withValues(alpha: 0.35),
+          highlightColor.withValues(alpha: 0.08),
+        ],
+      ).createShader(rect);
+
+    canvas.save();
+    canvas.clipRRect(rrect);
+    canvas.drawRRect(rrect.deflate(1.75), innerGlowPaint);
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant LiquidGlassSpecularPainter oldDelegate) =>
+      oldDelegate.radius != radius || oldDelegate.highlightColor != highlightColor;
+}
+
+/// Reusable Liquid Glass Surface Container implementing the 4-layer architecture:
+/// 1. .glass-filter   (BackdropFilter blur)
+/// 2. .glass-overlay  (rgba(255, 255, 255, 0.25))
+/// 3. .glass-specular (box-shadow: inset 1px 1px 0 var(--lg-highlight), inset 0 0 5px var(--lg-highlight))
+/// 4. .glass-content  (child)
+/// Outer container: box-shadow: 0 6px 6px rgba(0, 0, 0, 0.2), 0 0 20px rgba(0, 0, 0, 0.1);
 class LiquidGlassCard extends StatelessWidget {
   final Widget child;
   final bool isLiquidGlass;
@@ -342,38 +409,78 @@ class LiquidGlassCard extends StatelessWidget {
     super.key,
     required this.child,
     required this.isLiquidGlass,
-    this.radius = 22.0,
+    this.radius = 24.0,
     this.padding = const EdgeInsets.all(16.0),
     this.margin,
     this.onTap,
     this.color,
     this.border,
-    this.blurSigma = 24.0,
+    this.blurSigma = 16.0,
   });
 
   @override
   Widget build(BuildContext context) {
-    final decoration = LiquidGlassTheme.glassDecoration(
-      context: context,
-      isLiquidGlass: isLiquidGlass,
-      radius: radius,
-      customColor: color,
-      customBorder: border,
-    );
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    Widget content = Container(
-      padding: padding,
-      decoration: decoration,
-      child: child,
-    );
+    Widget content;
 
     if (isLiquidGlass) {
-      content = ClipRRect(
-        borderRadius: BorderRadius.circular(radius),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
-          child: content,
+      content = Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(radius),
+          boxShadow: LiquidGlassTheme.glassShadows(isDark),
         ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(radius),
+          child: Stack(
+            children: [
+              // Layer 1: .glass-filter (BackdropFilter blur)
+              Positioned.fill(
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
+                  child: const SizedBox.expand(),
+                ),
+              ),
+              // Layer 2: .glass-overlay (background: var(--lg-bg-color))
+              Positioned.fill(
+                child: Container(
+                  color: color ??
+                      (isDark
+                          ? LiquidGlassTheme.lgBgColorDark
+                          : LiquidGlassTheme.lgBgColor),
+                ),
+              ),
+              // Layer 3: .glass-specular (inset 1px 1px 0 + inset 0 0 5px highlight)
+              Positioned.fill(
+                child: CustomPaint(
+                  painter: LiquidGlassSpecularPainter(
+                    radius: radius,
+                    highlightColor: LiquidGlassTheme.lgHighlight,
+                  ),
+                ),
+              ),
+              // Layer 4: .glass-content
+              Padding(
+                padding: padding ?? EdgeInsets.zero,
+                child: child,
+              ),
+            ],
+          ),
+        ),
+      );
+    } else {
+      final decoration = LiquidGlassTheme.glassDecoration(
+        context: context,
+        isLiquidGlass: false,
+        radius: radius,
+        customColor: color,
+        customBorder: border,
+      );
+
+      content = Container(
+        padding: padding,
+        decoration: decoration,
+        child: child,
       );
     }
 
@@ -579,7 +686,7 @@ class LiquidGlassBackground extends StatelessWidget {
           ),
         ),
 
-        // Glowing Ambient Orb 1 (Top Right - Radiant Ruby/Coral glow like ss1 reference)
+        // Glowing Ambient Orb 1 (Top Right - Radiant Coral/Red glow matching --lg-red: #fb4268)
         Positioned(
           top: -40,
           right: -40,
@@ -589,7 +696,7 @@ class LiquidGlassBackground extends StatelessWidget {
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: isDark
-                  ? const Color(0xFFE11D48).withValues(alpha: 0.45) // Vivid ruby glow
+                  ? LiquidGlassTheme.lgRed.withValues(alpha: 0.45) // Vivid coral-red glow (#fb4268)
                   : const Color(0xFF60A5FA).withValues(alpha: 0.55),
             ),
             child: BackdropFilter(

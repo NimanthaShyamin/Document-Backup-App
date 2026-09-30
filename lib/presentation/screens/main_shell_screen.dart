@@ -1,4 +1,3 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/localization/app_language.dart';
@@ -25,7 +24,6 @@ class MainShellScreen extends ConsumerStatefulWidget {
 class _MainShellScreenState extends ConsumerState<MainShellScreen> {
   int _currentIndex = 1; // Home is default
   late final PageController _pageController;
-  final List<int> _tabHistory = [1];
 
   // Dock drag tracking
   double _dragStartY = 0;
@@ -49,7 +47,6 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
 
   void _onTabSelected(int index) {
     if (_currentIndex != index) {
-      _tabHistory.add(index);
       setState(() => _currentIndex = index);
       _pageController.animateToPage(
         index,
@@ -61,7 +58,6 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
 
   void _onPageChanged(int index) {
     if (_currentIndex != index) {
-      _tabHistory.add(index);
       setState(() => _currentIndex = index);
     }
   }
@@ -85,6 +81,7 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
     final isLiquidGlass = ref.watch(liquidGlassEnabledProvider);
     final language = ref.watch(appLanguageProvider);
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final searchVisible = ref.watch(searchVisibleProvider);
 
     final screens = [
       ScanScreen(onDocumentSaved: () => _onTabSelected(1)),
@@ -95,19 +92,23 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
       const SettingsScreen(),
     ];
 
+    // Standard Universal App Navigation:
+    // 1. If search is open -> close search
+    // 2. If on Scan or Settings -> go to Home
+    // 3. If on Home -> close app
+    final canPopApp = !searchVisible && _currentIndex == 1;
+
     return PopScope(
-      canPop: _tabHistory.length <= 1,
+      canPop: canPopApp,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
-        if (_tabHistory.length > 1) {
-          _tabHistory.removeLast();
-          final prev = _tabHistory.last;
-          setState(() => _currentIndex = prev);
-          _pageController.animateToPage(
-            prev,
-            duration: const Duration(milliseconds: 320),
-            curve: Curves.easeInOutCubic,
-          );
+        if (ref.read(searchVisibleProvider)) {
+          ref.read(searchVisibleProvider.notifier).state = false;
+          return;
+        }
+        if (_currentIndex != 1) {
+          _onTabSelected(1);
+          return;
         }
       },
       child: Scaffold(
@@ -146,166 +147,145 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
           label: AppStrings.get('tab_settings', language)),
     ];
 
-    BoxDecoration dockDecoration;
-    if (isLiquidGlass) {
-      dockDecoration = BoxDecoration(
-        borderRadius: BorderRadius.circular(30),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          stops: const [0.0, 0.45, 1.0],
-          colors: isDark
-              ? const [Color(0x28FFFFFF), Color(0x0AFFFFFF), Color(0x15FFFFFF)]
-              : const [Color(0x35FFFFFF), Color(0x0DFFFFFF), Color(0x1EFFFFFF)],
-        ),
-        border: Border.all(
-          color: isDark ? const Color(0x3DFFFFFF) : const Color(0x4DFFFFFF),
-          width: 1.0,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: isDark
-                ? Colors.black.withValues(alpha: 0.35)
-                : const Color(0xFF0F172A).withValues(alpha: 0.08),
-            blurRadius: 20,
-            spreadRadius: -2,
-            offset: const Offset(0, 8),
-          ),
-          BoxShadow(
-            color: Colors.white.withValues(alpha: isDark ? 0.06 : 0.30),
-            blurRadius: 2,
-            offset: const Offset(0, 1),
-          ),
-        ],
-      );
-    } else if (!isDark) {
-      dockDecoration = BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(30),
-        border: Border.all(color: const Color(0xFFDCE7F4), width: 1.1),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF0F2B5C).withValues(alpha: 0.09),
-            blurRadius: 22,
-            offset: const Offset(0, 7),
-          ),
-        ],
-      );
-    } else {
-      dockDecoration = BoxDecoration(
-        color: const Color(0xFF0C1338),
-        borderRadius: BorderRadius.circular(30),
-        border: Border.all(color: const Color(0xFF202E68), width: 1.1),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.65),
-            blurRadius: 24,
-            offset: const Offset(0, 8),
-          ),
-          BoxShadow(
-            color: const Color(0xFF1D3DF0).withValues(alpha: 0.12),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      );
-    }
+    Widget dockContent = Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: List.generate(tabs.length, (index) {
+        final tab = tabs[index];
+        final isSelected = _currentIndex == index;
 
-    Widget dockInner = GestureDetector(
-      // Detect vertical drag on the dock for search / AI chat gestures
-      onVerticalDragStart: (d) => _dragStartY = d.globalPosition.dy,
-      onVerticalDragEnd: (d) {
-        final delta = d.globalPosition.dy - _dragStartY;
-        _handleDockSwipe(delta);
-      },
-      child: Container(
-        height: 54,
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-        decoration: dockDecoration,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: List.generate(tabs.length, (index) {
-            final tab = tabs[index];
-            final isSelected = _currentIndex == index;
+        Color activePillColor;
+        Color activeContentColor;
+        Color inactiveContentColor;
+        BoxBorder? activePillBorder;
 
-            Color activePillColor;
-            Color activeContentColor;
-            Color inactiveContentColor;
-            BoxBorder? activePillBorder;
+        if (isLiquidGlass) {
+          // Exact liquid glass styling:
+          // .glass-item--active: background: rgba(0, 0, 0, 0.25); color: var(--lg-red) (#fb4268);
+          // .glass-item: color: var(--lg-grey) (#444739);
+          activePillColor = LiquidGlassTheme.lgActivePillBg; // rgba(0, 0, 0, 0.25)
+          activePillBorder = Border.all(
+            color: LiquidGlassTheme.lgRed.withValues(alpha: 0.35),
+            width: 1.0,
+          );
+          activeContentColor = LiquidGlassTheme.lgRed; // #fb4268
+          inactiveContentColor =
+              isDark ? Colors.white70 : LiquidGlassTheme.lgGrey; // #444739
+        } else if (!isDark) {
+          activePillColor = const Color(0xFFEFF6FF);
+          activeContentColor = const Color(0xFF2563EB);
+          inactiveContentColor = const Color(0xFF64748B);
+        } else {
+          activePillColor = const Color(0xFF162356);
+          activeContentColor = const Color(0xFF38BDF8);
+          inactiveContentColor = const Color(0xFF94A3B8);
+        }
 
-            if (isLiquidGlass) {
-              activePillColor = isDark
-                  ? Colors.white.withValues(alpha: 0.18)
-                  : Colors.white.withValues(alpha: 0.65);
-              activePillBorder = Border.all(
-                color: isDark
-                    ? Colors.white.withValues(alpha: 0.35)
-                    : Colors.white.withValues(alpha: 0.85),
-                width: 1.0,
-              );
-              activeContentColor =
-                  isDark ? Colors.white : const Color(0xFF0F172A);
-              inactiveContentColor =
-                  isDark ? Colors.white60 : const Color(0xFF64748B);
-            } else if (!isDark) {
-              activePillColor = const Color(0xFFEFF6FF);
-              activeContentColor = const Color(0xFF2563EB);
-              inactiveContentColor = const Color(0xFF64748B);
-            } else {
-              activePillColor = const Color(0xFF162356);
-              activeContentColor = const Color(0xFF38BDF8);
-              inactiveContentColor = const Color(0xFF94A3B8);
-            }
-
-            return GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => _onTabSelected(index),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 220),
-                curve: Curves.easeOutCubic,
-                padding: EdgeInsets.symmetric(
-                  horizontal: isSelected ? 14 : 10,
-                  vertical: 6,
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => _onTabSelected(index),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            padding: EdgeInsets.symmetric(
+              horizontal: isSelected ? 14 : 10,
+              vertical: 6,
+            ),
+            decoration: BoxDecoration(
+              color: isSelected ? activePillColor : Colors.transparent,
+              borderRadius: BorderRadius.circular(22),
+              border: isSelected ? activePillBorder : null,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  tab.icon,
+                  size: 20,
+                  color: isSelected
+                      ? activeContentColor
+                      : inactiveContentColor,
                 ),
-                decoration: BoxDecoration(
-                  color: isSelected ? activePillColor : Colors.transparent,
-                  borderRadius: BorderRadius.circular(22),
-                  border: isSelected ? activePillBorder : null,
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(tab.icon,
-                        size: 20,
-                        color: isSelected
-                            ? activeContentColor
-                            : inactiveContentColor),
-                    if (isSelected) ...[
-                      const SizedBox(width: 5),
-                      Text(
-                        tab.label,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: activeContentColor,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            );
-          }),
-        ),
-      ),
+                if (isSelected) ...[
+                  const SizedBox(width: 5),
+                  Text(
+                    tab.label,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: activeContentColor,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        );
+      }),
     );
 
+    Widget dockInner;
     if (isLiquidGlass) {
-      dockInner = ClipRRect(
-        borderRadius: BorderRadius.circular(30),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 25, sigmaY: 25),
-          child: dockInner,
+      dockInner = GestureDetector(
+        // Detect vertical drag on the dock for search / AI chat gestures
+        onVerticalDragStart: (d) => _dragStartY = d.globalPosition.dy,
+        onVerticalDragEnd: (d) {
+          final delta = d.globalPosition.dy - _dragStartY;
+          _handleDockSwipe(delta);
+        },
+        child: LiquidGlassCard(
+          isLiquidGlass: true,
+          radius: 30,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+          child: dockContent,
+        ),
+      );
+    } else {
+      BoxDecoration dockDecoration;
+      if (!isDark) {
+        dockDecoration = BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(30),
+          border: Border.all(color: const Color(0xFFDCE7F4), width: 1.1),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF0F2B5C).withValues(alpha: 0.09),
+              blurRadius: 22,
+              offset: const Offset(0, 7),
+            ),
+          ],
+        );
+      } else {
+        dockDecoration = BoxDecoration(
+          color: const Color(0xFF0C1338),
+          borderRadius: BorderRadius.circular(30),
+          border: Border.all(color: const Color(0xFF202E68), width: 1.1),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.65),
+              blurRadius: 24,
+              offset: const Offset(0, 8),
+            ),
+            BoxShadow(
+              color: const Color(0xFF1D3DF0).withValues(alpha: 0.12),
+              blurRadius: 10,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        );
+      }
+
+      dockInner = GestureDetector(
+        // Detect vertical drag on the dock for search / AI chat gestures
+        onVerticalDragStart: (d) => _dragStartY = d.globalPosition.dy,
+        onVerticalDragEnd: (d) {
+          final delta = d.globalPosition.dy - _dragStartY;
+          _handleDockSwipe(delta);
+        },
+        child: Container(
+          height: 54,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+          decoration: dockDecoration,
+          child: dockContent,
         ),
       );
     }
@@ -325,11 +305,23 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                _gestureHint(Icons.keyboard_arrow_down_rounded,
-                    'Search', isDark),
+                _gestureHint(
+                  Icons.keyboard_arrow_down_rounded,
+                  'Search',
+                  isDark,
+                  onTap: () {
+                    if (_currentIndex == 1) {
+                      ref.read(searchVisibleProvider.notifier).state = true;
+                    }
+                  },
+                ),
                 const SizedBox(width: 24),
-                _gestureHint(Icons.keyboard_arrow_up_rounded,
-                    'AI Chat', isDark),
+                _gestureHint(
+                  Icons.keyboard_arrow_up_rounded,
+                  'AI Chat',
+                  isDark,
+                  onTap: () => AiChatSheet.show(context),
+                ),
               ],
             ),
           ),
@@ -338,8 +330,8 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
             alignment: Alignment.bottomCenter,
             padding: const EdgeInsets.only(bottom: 12),
             child: SizedBox(
-              width: 260,
-              height: 52,
+              width: 270,
+              height: 54,
               child: dockInner,
             ),
           ),
@@ -348,24 +340,31 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
     );
   }
 
-  Widget _gestureHint(IconData icon, String label, bool isDark) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon,
-            size: 12,
-            color: isDark ? Colors.white24 : Colors.black26),
-        const SizedBox(width: 2),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 9,
-            color: isDark ? Colors.white24 : Colors.black26,
-            fontWeight: FontWeight.w600,
-            letterSpacing: 0.3,
-          ),
+  Widget _gestureHint(IconData icon, String label, bool isDark, {VoidCallback? onTap}) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon,
+                size: 13,
+                color: isDark ? Colors.white38 : Colors.black38),
+            const SizedBox(width: 3),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 10,
+                color: isDark ? Colors.white38 : Colors.black38,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.3,
+              ),
+            ),
+          ],
         ),
-      ],
+      ),
     );
   }
 }

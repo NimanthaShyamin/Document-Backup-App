@@ -77,64 +77,42 @@ class GeminiDocumentExtractionService {
     }
   }
 
+  /// Verified multimodal vision models that reliably support images and PDFs on current Gemini API.
+  static const List<String> _verifiedVisionModels = [
+    'gemini-flash-lite-latest',
+    'gemini-3.1-flash-lite',
+    'gemini-3.8-flash',
+    'gemini-3-flash-preview',
+    'gemini-3.6-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-flash-latest',
+  ];
+
+  /// Checks if a model is non-vision (e.g. TTS, audio-only, embedding).
+  static bool _isInvalidForVision(String modelName) {
+    final lower = modelName.toLowerCase();
+    return lower.contains('tts') ||
+        lower.contains('audio') ||
+        lower.contains('embedding') ||
+        lower.contains('imagen') ||
+        lower.contains('aqa') ||
+        lower.contains('realtime');
+  }
+
   /// Discovers available Gemini models for this API key or returns a prioritized fallback list.
   Future<List<String>> _getAvailableModels(String effectiveKey) async {
     final candidates = <String>[];
-    if (_cachedWorkingModel != null) {
+    if (_cachedWorkingModel != null && !_isInvalidForVision(_cachedWorkingModel!)) {
       candidates.add(_cachedWorkingModel!);
     }
 
-    try {
-      final listUrl = Uri.parse('https://generativelanguage.googleapis.com/v1beta/models?key=$effectiveKey');
-      final res = await http.get(listUrl).timeout(const Duration(seconds: 4));
-      if (res.statusCode == 200) {
-        final Map<String, dynamic> body = jsonDecode(res.body);
-        final models = body['models'] as List?;
-        if (models != null) {
-          final discovered = <String>[];
-          for (final m in models) {
-            final name = m['name'] as String?;
-            final methods = (m['supportedGenerationMethods'] as List?)?.cast<String>() ?? [];
-            if (name != null && methods.contains('generateContent')) {
-              final clean = name.startsWith('models/') ? name.substring(7) : name;
-              discovered.add(clean);
-            }
-          }
-          if (discovered.isNotEmpty) {
-            discovered.sort((a, b) {
-              final aFlash = a.toLowerCase().contains('flash');
-              final bFlash = b.toLowerCase().contains('flash');
-              if (aFlash && !bFlash) return -1;
-              if (!aFlash && bFlash) return 1;
-              return b.compareTo(a);
-            });
-            for (final m in discovered) {
-              if (!candidates.contains(m)) {
-                candidates.add(m);
-              }
-            }
-            return candidates;
-          }
-        }
+    // Always prioritize verified active vision models
+    for (final vm in _verifiedVisionModels) {
+      if (!candidates.contains(vm)) {
+        candidates.add(vm);
       }
-    } catch (e) {
-      developer.log('[GeminiExtractionService] Model discovery query failed: $e');
     }
 
-    const defaultFallbacks = [
-      'gemini-2.5-flash',
-      'gemini-2.0-flash',
-      'gemini-1.5-flash-latest',
-      'gemini-2.0-flash-exp',
-      'gemini-2.5-flash-lite',
-      'gemini-1.5-pro',
-      'gemini-1.5-flash',
-    ];
-    for (final m in defaultFallbacks) {
-      if (!candidates.contains(m)) {
-        candidates.add(m);
-      }
-    }
     return candidates;
   }
 
@@ -145,7 +123,14 @@ class GeminiDocumentExtractionService {
     if (effectiveKey == null || effectiveKey.isEmpty) {
       developer.log('[GeminiExtractionService] No Gemini API key provided. Skipping AI extraction.');
       return ExtractedDocumentDetails.error(
-        'Gemini API key is not configured. Please add your API key in Settings.',
+        'Gemini API key is not configured. Please add your Google AI Studio API key in Settings.',
+      );
+    }
+
+    if (!effectiveKey.startsWith('AIza')) {
+      developer.log('[GeminiExtractionService] Invalid key prefix detected: ${effectiveKey.substring(0, 4)}...');
+      return ExtractedDocumentDetails.error(
+        'Invalid API Key format: Google AI Studio keys start with "AIzaSy...". Please generate a free API key at aistudio.google.com and update it in Settings.',
       );
     }
 
@@ -219,6 +204,12 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
             );
           }
 
+          // If this model does not support images, skip immediately to the next candidate
+          if (sdkErrorStr.contains('Image input modality is not enabled')) {
+            if (_cachedWorkingModel == modelName) _cachedWorkingModel = null;
+            continue;
+          }
+
           final isNotFound = sdkErrorStr.contains('NOT_FOUND') ||
               sdkErrorStr.contains('not found') ||
               sdkErrorStr.contains('not supported for generateContent');
@@ -241,12 +232,9 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
               if (restResult.errorMessage!.contains('API_KEY_INVALID')) {
                 return restResult;
               }
-              if (restResult.errorMessage!.contains('NOT_FOUND') ||
-                  restResult.errorMessage!.contains('not found')) {
-                // Model not found in REST either, proceed to next candidate model
-                continue;
-              }
               lastErrorMsg = restResult.errorMessage!;
+              // Proceed to next candidate model
+              continue;
             } else {
               _cachedWorkingModel = modelName;
               return restResult;
@@ -281,8 +269,8 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
             'parts': [
               {'text': prompt},
               {
-                'inline_data': {
-                  'mime_type': mimeType,
+                'inlineData': {
+                  'mimeType': mimeType,
                   'data': base64Data,
                 }
               }
@@ -291,7 +279,7 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
         ],
         'generationConfig': {
           'temperature': 0.1,
-          'response_mime_type': 'application/json',
+          'responseMimeType': 'application/json',
         }
       };
 

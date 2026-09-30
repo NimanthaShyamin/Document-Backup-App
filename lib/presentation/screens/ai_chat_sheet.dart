@@ -33,6 +33,7 @@ class AiChatSheet extends ConsumerStatefulWidget {
     return showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       enableDrag: true,
       builder: (_) => const AiChatSheet(),
@@ -51,7 +52,20 @@ class _AiChatSheetState extends ConsumerState<AiChatSheet> {
   bool _isTyping = false;
 
   @override
+  void initState() {
+    super.initState();
+    _focusNode.addListener(_onFocusChange);
+  }
+
+  void _onFocusChange() {
+    if (_focusNode.hasFocus) {
+      _scrollToBottom();
+    }
+  }
+
+  @override
   void dispose() {
+    _focusNode.removeListener(_onFocusChange);
     _controller.dispose();
     _scrollController.dispose();
     _focusNode.dispose();
@@ -120,15 +134,18 @@ class _AiChatSheetState extends ConsumerState<AiChatSheet> {
     final borderColor =
         isDark ? const Color(0xFF1D3DF0).withValues(alpha: 0.4) : const Color(0xFFE2E8F0);
 
+    final viewInsets = MediaQuery.of(context).viewInsets.bottom;
+    final isKeyboardOpen = viewInsets > 0;
+    final screenHeight = MediaQuery.of(context).size.height;
+    final sheetHeight = isKeyboardOpen ? (screenHeight * 0.94) : (screenHeight * 0.55);
+
     return GestureDetector(
       onTap: () => _focusNode.unfocus(),
-      child: DraggableScrollableSheet(
-        initialChildSize: 0.55,
-        minChildSize: 0.35,
-        maxChildSize: 0.92,
-        expand: false,
-        builder: (context, scrollController) {
-          return ClipRRect(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 240),
+        curve: Curves.easeOutCubic,
+        height: sheetHeight,
+        child: ClipRRect(
             borderRadius:
                 const BorderRadius.vertical(top: Radius.circular(28)),
             child: BackdropFilter(
@@ -243,10 +260,9 @@ class _AiChatSheetState extends ConsumerState<AiChatSheet> {
                 ),
               ),
             ),
-          );
-        },
-      ),
-    );
+          ),
+        ),
+      );
   }
 
   Widget _buildWelcome(bool isDark, List<VehicleDocument> docs) {

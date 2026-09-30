@@ -38,10 +38,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   final FocusNode _searchFocusNode = FocusNode();
   String _searchQuery = '';
 
-  // ── Flat-view popup-delete ──────────────────────────────────────────
-  String? _popupDocId;
-  late final AnimationController _popupAnimCtrl;
-  late final Animation<double> _popupAnim;
+  // ── Sync Refresh State ───────────────────────────────────────────────
+  bool _isSyncRefreshing = false;
 
   // ── UI state ────────────────────────────────────────────────────────
   String? _statusFilter;
@@ -54,31 +52,128 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   @override
   void initState() {
     super.initState();
-    _popupAnimCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 280),
-    );
-    _popupAnim = CurvedAnimation(
-        parent: _popupAnimCtrl, curve: Curves.easeOutBack);
   }
 
   @override
   void dispose() {
     _searchController.dispose();
     _searchFocusNode.dispose();
-    _popupAnimCtrl.dispose();
     super.dispose();
   }
 
-  void _enterPopup(String docId) {
-    setState(() => _popupDocId = docId);
-    _popupAnimCtrl.forward(from: 0);
+  Future<void> _handleSyncRefresh() async {
+    if (_isSyncRefreshing) return;
+    setState(() => _isSyncRefreshing = true);
+    try {
+      final syncRepo = ref.read(syncRepositoryProvider);
+      await syncRepo.reconcile(interactiveAuth: true);
+      await syncRepo.processQueue();
+      if (mounted) {
+        _snackSuccess(context, 'Sync complete: Vault is up to date.');
+      }
+    } catch (e) {
+      if (mounted) {
+        _snackError(context, 'Sync error: $e');
+      }
+    } finally {
+      if (mounted) setState(() => _isSyncRefreshing = false);
+    }
   }
 
-  void _exitPopup() {
-    _popupAnimCtrl.reverse().then((_) {
-      if (mounted) setState(() => _popupDocId = null);
-    });
+  void _showDocumentActionSheet(BuildContext context, VehicleDocument doc) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        final isDark = Theme.of(context).brightness == Brightness.dark;
+        return SafeArea(
+          child: Container(
+            margin: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF1E293B) : Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.25),
+                  blurRadius: 20,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF2563EB).withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Icon(doc.documentType.icon, color: const Color(0xFF2563EB), size: 20),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              doc.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 15,
+                                color: isDark ? Colors.white : const Color(0xFF0F172A),
+                              ),
+                            ),
+                            if (doc.vehicleRegNo.isNotEmpty && doc.vehicleRegNo != 'General')
+                              Text(
+                                'Ref: ${doc.vehicleRegNo}',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: isDark ? Colors.white54 : const Color(0xFF64748B),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Divider(height: 1, color: isDark ? Colors.white10 : const Color(0xFFE2E8F0)),
+                ListTile(
+                  leading: const Icon(Icons.visibility_outlined, color: Color(0xFF2563EB)),
+                  title: const Text('View Document', style: TextStyle(fontWeight: FontWeight.w600)),
+                  onTap: () {
+                    Navigator.of(ctx).pop();
+                    Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => DocumentViewerScreen(document: doc),
+                    ));
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.delete_outline, color: Color(0xFFDC2626)),
+                  title: const Text('Delete Document',
+                      style: TextStyle(color: Color(0xFFDC2626), fontWeight: FontWeight.bold)),
+                  onTap: () async {
+                    Navigator.of(ctx).pop();
+                    await DocumentActionHelper.confirmAndDeleteDocument(
+                      context: context,
+                      ref: ref,
+                      document: doc,
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   // ── Build ────────────────────────────────────────────────────────────
@@ -113,9 +208,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     }
 
     return GestureDetector(
+      behavior: HitTestBehavior.translucent,
       onTap: () {
-        if (_popupDocId != null) _exitPopup();
-        FocusScope.of(context).unfocus();
+        if (ref.read(searchVisibleProvider)) {
+          _searchFocusNode.unfocus();
+          _searchController.clear();
+          setState(() => _searchQuery = '');
+          ref.read(searchVisibleProvider.notifier).state = false;
+        } else {
+          FocusScope.of(context).unfocus();
+        }
       },
       child: Scaffold(
         backgroundColor: Colors.transparent,
@@ -170,16 +272,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
                 // Document content
                 Expanded(
-                  child: SingleChildScrollView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding:
-                        const EdgeInsets.fromLTRB(18, 4, 18, 110),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _buildSyncStatusBar(
-                            syncAsync.value, isLiquidGlass, language),
-                        const SizedBox(height: 14),
+                  child: RefreshIndicator(
+                    onRefresh: _handleSyncRefresh,
+                    color: isDark ? LiquidGlassTheme.accentElectricBlue : const Color(0xFF2563EB),
+                    child: SingleChildScrollView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding:
+                          const EdgeInsets.fromLTRB(18, 4, 18, 110),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildSyncStatusBar(
+                              syncAsync.value, isLiquidGlass, language),
+                          const SizedBox(height: 14),
 
                         if (_statusFilter != null) ...[
                           _buildActiveFilterBadge(isDark),
@@ -207,6 +312,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                               ),
                             ),
                           )
+                        else if (_searchQuery.isNotEmpty)
+                          _buildFlatList(
+                              context, filteredDocs, isLiquidGlass, isDark)
                         else if (isCategorized)
                           _buildFolderGrid(
                               context,
@@ -224,6 +332,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                     ),
                   ),
                 ),
+              ),
               ],
             );
           },
@@ -515,35 +624,70 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         educationalDocs.isNotEmpty ||
         taxDocs.isNotEmpty;
 
+    final hasOtherDocs = hasPersonal || travelDocs.isNotEmpty || generalDocs.isNotEmpty;
+    final hasMultipleVehicles = vehicleGroups.length > 1;
+    final shouldCreateVehiclesWrapper = hasMultipleVehicles || (vehicleGroups.isNotEmpty && hasOtherDocs);
+
     final List<Widget> folders = [];
 
     // ── Section label: Vehicles ──────────────────────────────────────
     if (vehicleGroups.isNotEmpty) {
       folders.add(_sectionLabel('Vehicles', Icons.directions_car_rounded,
           const Color(0xFF2563EB), isDark));
-    }
 
-    vehicleGroups.forEach((regNo, vDocs) {
-      // Cross-link: add driving licenses not already in this folder
-      final combined = [...vDocs];
-      for (final dl in drivingLicenses) {
-        if (!combined.any((d) => d.id == dl.id)) combined.add(dl);
-      }
+      final individualVehicleFolders = <SmartFolder>[];
+      vehicleGroups.forEach((regNo, vDocs) {
+        // Cross-link: add driving licenses not already in this folder
+        final combined = [...vDocs];
+        for (final dl in drivingLicenses) {
+          if (!combined.any((d) => d.id == dl.id)) combined.add(dl);
+        }
 
-      folders.add(_buildFolderTile(
-        context: context,
-        folder: SmartFolder(
+        individualVehicleFolders.add(SmartFolder(
           id: 'vehicle_$regNo',
           title: regNo,
           subtitle: 'Fuel, Insurance, License',
           icon: Icons.directions_car_rounded,
           accentColor: const Color(0xFF2563EB),
           documents: combined,
-        ),
-        isDark: isDark,
-        isLiquidGlass: isLiquidGlass,
-      ));
-    });
+        ));
+      });
+
+      if (shouldCreateVehiclesWrapper) {
+        final totalVehicleDocs = individualVehicleFolders.fold<int>(
+            0, (sum, f) => sum + f.documents.length);
+        final vehiclesWrapperFolder = SmartFolder(
+          id: 'vehicles_root',
+          title: 'Vehicles',
+          subtitle:
+              '${vehicleGroups.length} Vehicle${vehicleGroups.length == 1 ? '' : 's'} · $totalVehicleDocs Document${totalVehicleDocs == 1 ? '' : 's'}',
+          icon: Icons.directions_car_rounded,
+          accentColor: const Color(0xFF2563EB),
+          documents: individualVehicleFolders
+              .expand((f) => f.documents)
+              .toSet()
+              .toList(),
+          subFolders: individualVehicleFolders,
+        );
+
+        folders.add(_buildFolderTile(
+          context: context,
+          folder: vehiclesWrapperFolder,
+          isDark: isDark,
+          isLiquidGlass: isLiquidGlass,
+        ));
+      } else {
+        // Only 1 vehicle in the vault and NO other documents -> show that vehicle directly
+        for (final vf in individualVehicleFolders) {
+          folders.add(_buildFolderTile(
+            context: context,
+            folder: vf,
+            isDark: isDark,
+            isLiquidGlass: isLiquidGlass,
+          ));
+        }
+      }
+    }
 
     // ── Section label: Personal ──────────────────────────────────────
     if (hasPersonal) {
@@ -819,164 +963,31 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   Widget _buildDocumentCard(BuildContext context, VehicleDocument doc,
       bool isLiquidGlass, bool isDark) {
-    final isPopped = _popupDocId == doc.id;
-    final isExpired = doc.isExpired;
-
-    Widget card = GestureDetector(
-      onTap: () {
-        if (_popupDocId != null) {
-          _exitPopup();
-        } else {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: GestureDetector(
+        onTap: () {
           Navigator.of(context).push(
             MaterialPageRoute(
                 builder: (_) => DocumentViewerScreen(document: doc)),
           );
-        }
-      },
-      onLongPress: () => _enterPopup(doc.id),
-      child: AnimatedBuilder(
-        animation: _popupAnim,
-        builder: (ctx, child) {
-          final scale =
-              isPopped ? (1.0 + 0.045 * _popupAnim.value) : 1.0;
-          return Transform.scale(scale: scale, child: child);
         },
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: isPopped
-                    ? [
-                        BoxShadow(
-                          color:
-                              Colors.black.withValues(alpha: 0.28),
-                          blurRadius: 22,
-                          spreadRadius: 2,
-                          offset: const Offset(0, 10),
-                        )
-                      ]
-                    : [],
-              ),
-              child: _buildCardContent(doc, isExpired, isDark),
-            ),
-            if (isPopped) ...[
-              Positioned(
-                bottom: 0,
-                left: 0,
-                right: 0,
-                child: AnimatedBuilder(
-                  animation: _popupAnim,
-                  builder: (_, __) => Opacity(
-                    opacity: _popupAnim.value,
-                    child: Container(
-                      padding:
-                          const EdgeInsets.symmetric(vertical: 5),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFDC2626)
-                            .withValues(alpha: 0.88),
-                        borderRadius: const BorderRadius.vertical(
-                            bottom: Radius.circular(16)),
-                      ),
-                      child: const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.swipe_left_rounded,
-                              color: Colors.white, size: 13),
-                          SizedBox(width: 4),
-                          Text(
-                            'Swipe left to delete',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              Positioned(
-                top: -9,
-                right: -9,
-                child: AnimatedBuilder(
-                  animation: _popupAnim,
-                  builder: (_, child) => Transform.scale(
-                      scale: _popupAnim.value, child: child),
-                  child: GestureDetector(
-                    onTap: () async {
-                      final ok = await DocumentActionHelper
-                          .confirmAndDeleteDocument(
-                        context: context,
-                        ref: ref,
-                        document: doc,
-                      );
-                      if (ok && mounted) _exitPopup();
-                    },
-                    child: Container(
-                      width: 28,
-                      height: 28,
-                      decoration: const BoxDecoration(
-                        color: Color(0xFFDC2626),
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black38,
-                            blurRadius: 6,
-                            offset: Offset(0, 2),
-                          )
-                        ],
-                      ),
-                      child: const Icon(Icons.close_rounded,
-                          color: Colors.white, size: 16),
-                    ),
-                  ),
-                ),
-              ),
+        onLongPress: () => _showDocumentActionSheet(context, doc),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.04),
+                blurRadius: 6,
+                offset: const Offset(0, 2),
+              )
             ],
-          ],
+          ),
+          child: _buildCardContent(doc, doc.isExpired, isDark),
         ),
       ),
     );
-
-    if (isPopped) {
-      card = Dismissible(
-        key: ValueKey('hs_dismiss_${doc.id}'),
-        direction: DismissDirection.endToStart,
-        background: Container(
-          alignment: Alignment.centerRight,
-          padding: const EdgeInsets.only(right: 20),
-          decoration: BoxDecoration(
-            color: const Color(0xFFDC2626),
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: const Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.delete_outline, color: Colors.white, size: 24),
-              SizedBox(width: 6),
-              Text('Delete',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
-                  )),
-            ],
-          ),
-        ),
-        confirmDismiss: (_) =>
-            DocumentActionHelper.confirmAndDeleteDocument(
-              context: context, ref: ref, document: doc),
-        onDismissed: (_) => setState(() => _popupDocId = null),
-        child: card,
-      );
-    }
-
-    return card;
   }
 
   Widget _buildCardContent(
@@ -1134,38 +1145,53 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     Color color = Colors.greenAccent;
     IconData icon = Icons.cloud_done;
 
-    if (state is SyncEngineOffline) {
-      text = AppStrings.get('cloud_offline', language);
-      color = Colors.amberAccent;
-      icon = Icons.cloud_off;
+    if (_isSyncRefreshing) {
+      text = 'Checking online & syncing offline docs...';
+      color = LiquidGlassTheme.accentAmber;
+      icon = Icons.sync;
     } else if (state is SyncEngineSyncing) {
       text = state.currentAction;
       color = LiquidGlassTheme.accentAmber;
       icon = Icons.sync;
+    } else if (state is SyncEngineOffline) {
+      text = AppStrings.get('cloud_offline', language);
+      color = Colors.amberAccent;
+      icon = Icons.cloud_off;
     }
 
-    return LiquidGlassCard(
-      isLiquidGlass: isLiquidGlass,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-      radius: 14,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, color: color, size: 14),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              text,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: color,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
+    return GestureDetector(
+      onTap: _handleSyncRefresh,
+      child: LiquidGlassCard(
+        isLiquidGlass: isLiquidGlass,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        radius: 14,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _isSyncRefreshing
+                ? SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: color),
+                  )
+                : Icon(icon, color: color, size: 14),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                text,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
-          ),
-        ],
+            const SizedBox(width: 6),
+            Icon(Icons.refresh_rounded, color: color.withValues(alpha: 0.8), size: 16),
+          ],
+        ),
       ),
     );
   }

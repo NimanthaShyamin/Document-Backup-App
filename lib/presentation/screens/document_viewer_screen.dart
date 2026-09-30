@@ -1,6 +1,5 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -29,7 +28,7 @@ class _DocumentViewerScreenState extends ConsumerState<DocumentViewerScreen> {
   final TransformationController _transformationController =
       TransformationController();
 
-  PdfControllerPinch? _pdfController;
+  PdfController? _pdfController;
   int _currentPdfPage = 1;
   int _totalPdfPages = 0;
   bool _isPdfLoading = false;
@@ -50,8 +49,7 @@ class _DocumentViewerScreenState extends ConsumerState<DocumentViewerScreen> {
   }
 
   bool _isPdfDocument() {
-    return widget.document.documentType == DocumentType.revenueLicense ||
-        widget.document.localFilePath.toLowerCase().endsWith('.pdf');
+    return widget.document.localFilePath.toLowerCase().endsWith('.pdf');
   }
 
   bool _isQrDocument() {
@@ -72,7 +70,7 @@ class _DocumentViewerScreenState extends ConsumerState<DocumentViewerScreen> {
       }
 
       final doc = await PdfDocument.openFile(file.path);
-      _pdfController = PdfControllerPinch(
+      _pdfController = PdfController(
         document: Future.value(doc),
         initialPage: 1,
       );
@@ -103,14 +101,11 @@ class _DocumentViewerScreenState extends ConsumerState<DocumentViewerScreen> {
   }
 
   void _toggleFullScreen() {
+    _resetZoom();
     setState(() {
       _isFullScreen = !_isFullScreen;
+      _dragOffsetY = 0.0;
     });
-    if (_isFullScreen) {
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    } else {
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    }
   }
 
   bool get _canSwipeDismiss {
@@ -123,67 +118,70 @@ class _DocumentViewerScreenState extends ConsumerState<DocumentViewerScreen> {
   Widget build(BuildContext context) {
     final opacity = (1.0 - (_dragOffsetY / 400.0)).clamp(0.0, 1.0);
 
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: _isFullScreen
-          ? null
-          : AppBar(
-              backgroundColor: Colors.black.withValues(alpha: 0.85),
-              elevation: 0,
-              iconTheme: const IconThemeData(color: Colors.white),
-              leading: IconButton(
-                icon: const Icon(Icons.arrow_back_ios_new_rounded),
-                onPressed: () => Navigator.of(context).pop(),
-              ),
-              title: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    widget.document.title,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
+    return PopScope(
+      canPop: !_isFullScreen,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        if (_isFullScreen) {
+          _toggleFullScreen();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        appBar: _isFullScreen
+            ? null
+            : AppBar(
+                backgroundColor: Colors.black.withValues(alpha: 0.85),
+                elevation: 0,
+                iconTheme: const IconThemeData(color: Colors.white),
+                leading: IconButton(
+                  icon: const Icon(Icons.arrow_back_ios_new_rounded),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+                title: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.document.title,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                    Text(
+                      '${widget.document.vehicleRegNo} • ${_formatDocType(widget.document.documentType)}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.white.withValues(alpha: 0.7),
+                      ),
+                    ),
+                  ],
+                ),
+                actions: [
+                  IconButton(
+                    tooltip: 'Full Screen',
+                    icon: const Icon(Icons.fullscreen, color: Colors.white),
+                    onPressed: _toggleFullScreen,
                   ),
-                  Text(
-                    '${widget.document.vehicleRegNo} • ${_formatDocType(widget.document.documentType)}',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.white.withValues(alpha: 0.7),
-                    ),
+                  IconButton(
+                    tooltip: 'Delete Document',
+                    icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                    onPressed: () async {
+                      final deleted = await DocumentActionHelper.confirmAndDeleteDocument(
+                        context: context,
+                        ref: ref,
+                        document: widget.document,
+                      );
+                      if (deleted && context.mounted) {
+                        Navigator.of(context).pop();
+                      }
+                    },
                   ),
                 ],
               ),
-              actions: [
-                IconButton(
-                  tooltip: 'Reset Zoom',
-                  icon: const Icon(Icons.zoom_out_map, color: Colors.white),
-                  onPressed: _resetZoom,
-                ),
-                IconButton(
-                  tooltip: 'Full Screen',
-                  icon: const Icon(Icons.fullscreen, color: Colors.white),
-                  onPressed: _toggleFullScreen,
-                ),
-                IconButton(
-                  tooltip: 'Delete Document',
-                  icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                  onPressed: () async {
-                    final deleted = await DocumentActionHelper.confirmAndDeleteDocument(
-                      context: context,
-                      ref: ref,
-                      document: widget.document,
-                    );
-                    if (deleted && context.mounted) {
-                      Navigator.of(context).pop();
-                    }
-                  },
-                ),
-              ],
-            ),
       body: GestureDetector(
         behavior: HitTestBehavior.translucent,
         onVerticalDragUpdate: (details) {
@@ -197,7 +195,13 @@ class _DocumentViewerScreenState extends ConsumerState<DocumentViewerScreen> {
         onVerticalDragEnd: (details) {
           if (!_canSwipeDismiss) return;
           if (_dragOffsetY > 110 || (details.primaryVelocity ?? 0) > 600) {
-            Navigator.of(context).pop();
+            if (_dragOffsetY > 280) {
+              Navigator.of(context).pop();
+            } else if (_isFullScreen) {
+              _toggleFullScreen();
+            } else {
+              Navigator.of(context).pop();
+            }
           } else {
             setState(() {
               _dragOffsetY = 0.0;
@@ -215,56 +219,109 @@ class _DocumentViewerScreenState extends ConsumerState<DocumentViewerScreen> {
           transform: Matrix4.translationValues(0.0, _dragOffsetY, 0.0),
           child: Opacity(
             opacity: opacity,
-            child: SafeArea(
-              bottom: false,
-              child: Column(
-                children: [
-                  // 1. Swipe Handle & High-Luminance Indicator Banner
-                  if (!_isFullScreen) ...[
-                    const SizedBox(height: 6),
-                    Container(
-                      width: 36,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.3),
-                        borderRadius: BorderRadius.circular(2),
-                      ),
+            child: Stack(
+              children: [
+                // 1. Core Document Content: ALWAYS alive, full-bounds, stable key!
+                Positioned.fill(
+                  key: const ValueKey('doc_viewer_content_layer'),
+                  child: Padding(
+                    padding: EdgeInsets.only(
+                      top: _isFullScreen ? 0 : 50,
+                      bottom: _isFullScreen ? 0 : 130,
                     ),
-                    const SizedBox(height: 8),
-                    _buildBrightnessPill(),
-                    const SizedBox(height: 10),
-                  ],
+                    child: _buildDocumentContent(),
+                  ),
+                ),
 
-                  // 2. Core Document Content in an Expanded, balanced container
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 12.0),
-                      child: Stack(
-                        alignment: Alignment.center,
+                // 2. High-Luminance Indicator Banner at top (when not full screen)
+                if (!_isFullScreen)
+                  Positioned(
+                    top: 10,
+                    left: 0,
+                    right: 0,
+                    child: SafeArea(
+                      bottom: false,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          Center(
-                            child: _buildDocumentContent(),
-                          ),
-                          if (_isPdfDocument() && _totalPdfPages > 1)
-                            Positioned(
-                              bottom: 16,
-                              right: 16,
-                              child: _buildPdfPageIndicator(),
+                          Container(
+                            width: 36,
+                            height: 4,
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.3),
+                              borderRadius: BorderRadius.circular(2),
                             ),
+                          ),
+                          const SizedBox(height: 8),
+                          _buildBrightnessPill(),
                         ],
                       ),
                     ),
                   ),
 
-                  // 3. Bottom Information & Metadata Card
-                  if (!_isFullScreen)
-                    _buildMetadataOverlay(context),
-                ],
-              ),
+                // 3. PDF Page Navigation Pill
+                if (_isPdfDocument() && _totalPdfPages > 1)
+                  Positioned(
+                    bottom: _isFullScreen ? 24 : 148,
+                    right: 16,
+                    child: _buildPdfPageIndicator(),
+                  ),
+
+                // 4. Bottom Information & Metadata Card (when not full screen)
+                if (!_isFullScreen)
+                  Positioned(
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    child: SafeArea(
+                      top: false,
+                      child: _buildMetadataOverlay(context),
+                    ),
+                  ),
+
+                // 5. Exit Full Screen Button (when full screen)
+                if (_isFullScreen)
+                  Positioned(
+                    top: 16,
+                    right: 16,
+                    child: SafeArea(
+                      child: GestureDetector(
+                        onTap: _toggleFullScreen,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.75),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                                color: Colors.white30, width: 1),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.fullscreen_exit_rounded,
+                                  color: Colors.white, size: 18),
+                              SizedBox(width: 6),
+                              Text(
+                                'Exit Full Screen',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
         ),
       ),
+    ),
     );
   }
 
@@ -279,89 +336,95 @@ class _DocumentViewerScreenState extends ConsumerState<DocumentViewerScreen> {
   }
 
   Widget _buildQrView() {
-    return Container(
-      padding: const EdgeInsets.all(28.0),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24.0),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.white.withValues(alpha: 0.15),
-            blurRadius: 40,
-            spreadRadius: 10,
-          ),
-        ],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          QrImageView(
-            data: widget.document.policyNo ?? widget.document.id,
-            version: QrVersions.auto,
-            size: 260.0,
-            errorCorrectionLevel: QrErrorCorrectLevel.H,
-            eyeStyle: const QrEyeStyle(
-              eyeShape: QrEyeShape.square,
-              color: Colors.black,
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.all(28.0),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(24.0),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.white.withValues(alpha: 0.15),
+              blurRadius: 40,
+              spreadRadius: 10,
             ),
-            dataModuleStyle: const QrDataModuleStyle(
-              dataModuleShape: QrDataModuleShape.square,
-              color: Colors.black,
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            QrImageView(
+              data: widget.document.policyNo ?? widget.document.id,
+              version: QrVersions.auto,
+              size: 260.0,
+              errorCorrectionLevel: QrErrorCorrectLevel.H,
+              eyeStyle: const QrEyeStyle(
+                eyeShape: QrEyeShape.square,
+                color: Colors.black,
+              ),
+              dataModuleStyle: const QrDataModuleStyle(
+                dataModuleShape: QrDataModuleShape.square,
+                color: Colors.black,
+              ),
             ),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            widget.document.vehicleRegNo,
-            style: const TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 2.0,
-              color: Colors.black87,
+            const SizedBox(height: 16),
+            Text(
+              widget.document.vehicleRegNo,
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 2.0,
+                color: Colors.black87,
+              ),
             ),
-          ),
-          Text(
-            'QUICK FUEL PASS VALIDATED',
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 1.2,
-              color: Colors.grey.shade600,
+            Text(
+              'QUICK FUEL PASS VALIDATED',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1.2,
+                color: Colors.grey.shade600,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildPdfView() {
     if (_isPdfLoading) {
-      return const Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          CircularProgressIndicator(color: Colors.white),
-          SizedBox(height: 16),
-          Text(
-            'Decrypting sandboxed PDF...',
-            style: TextStyle(color: Colors.white70),
-          ),
-        ],
+      return const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(color: Colors.white),
+            SizedBox(height: 16),
+            Text(
+              'Decrypting sandboxed PDF...',
+              style: TextStyle(color: Colors.white70),
+            ),
+          ],
+        ),
       );
     }
 
     if (_pdfLoadError != null) {
-      return Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.error_outline, color: Colors.redAccent, size: 48),
-            const SizedBox(height: 12),
-            Text(
-              'Failed to render PDF: $_pdfLoadError',
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white70),
-            ),
-          ],
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, color: Colors.redAccent, size: 48),
+              const SizedBox(height: 12),
+              Text(
+                'Failed to render PDF: $_pdfLoadError',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white70),
+              ),
+            ],
+          ),
         ),
       );
     }
@@ -370,44 +433,57 @@ class _DocumentViewerScreenState extends ConsumerState<DocumentViewerScreen> {
       return const SizedBox.shrink();
     }
 
-    return PdfViewPinch(
-      controller: _pdfController!,
-      onPageChanged: (page) {
-        setState(() {
-          _currentPdfPage = page;
-        });
-      },
+    return SizedBox.expand(
+      child: PdfView(
+        key: const ValueKey('pdf_view_stable_key'),
+        controller: _pdfController!,
+        scrollDirection: Axis.horizontal,
+        pageSnapping: true,
+        backgroundDecoration: const BoxDecoration(
+          color: Colors.transparent,
+        ),
+        onPageChanged: (page) {
+          setState(() {
+            _currentPdfPage = page;
+          });
+        },
+      ),
     );
   }
 
   Widget _buildImageView() {
     final file = File(widget.document.localFilePath);
 
-    return InteractiveViewer(
-      transformationController: _transformationController,
-      minScale: 1.0,
-      maxScale: 6.0,
-      clipBehavior: Clip.none,
-      child: Image.file(
-        file,
-        fit: BoxFit.contain,
-        errorBuilder: (context, error, stackTrace) {
-          return Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.broken_image, color: Colors.amber, size: 48),
-                const SizedBox(height: 12),
-                Text(
-                  'Unable to load image from local storage:\n${widget.document.localFilePath}',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+    return SizedBox.expand(
+      child: InteractiveViewer(
+        key: const ValueKey('img_view_stable_key'),
+        transformationController: _transformationController,
+        minScale: 1.0,
+        maxScale: 6.0,
+        clipBehavior: Clip.none,
+        child: Center(
+          child: Image.file(
+            file,
+            fit: BoxFit.contain,
+            errorBuilder: (context, error, stackTrace) {
+              return Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.broken_image, color: Colors.amber, size: 48),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Unable to load image from local storage:\n${widget.document.localFilePath}',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          );
-        },
+              );
+            },
+          ),
+        ),
       ),
     );
   }

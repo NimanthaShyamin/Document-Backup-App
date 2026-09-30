@@ -5,6 +5,7 @@ import '../../core/theme/liquid_glass_theme.dart';
 
 import '../../domain/entities/vehicle_document.dart';
 
+import '../controllers/document_providers.dart';
 import '../utils/document_action_helper.dart';
 import 'document_viewer_screen.dart';
 
@@ -17,6 +18,7 @@ class SmartFolder {
   final Color accentColor;
   final List<VehicleDocument> documents;
   final Map<String, List<VehicleDocument>>? subCategories;
+  final List<SmartFolder>? subFolders;
 
   const SmartFolder({
     required this.id,
@@ -26,6 +28,7 @@ class SmartFolder {
     required this.accentColor,
     required this.documents,
     this.subCategories,
+    this.subFolders,
   });
 }
 
@@ -42,40 +45,103 @@ class FolderContentsScreen extends ConsumerStatefulWidget {
       _FolderContentsScreenState();
 }
 
-class _FolderContentsScreenState extends ConsumerState<FolderContentsScreen>
-    with SingleTickerProviderStateMixin {
-  String? _popupDocId;
-  late AnimationController _popupAnimController;
-  late Animation<double> _popupAnim;
+class _FolderContentsScreenState extends ConsumerState<FolderContentsScreen> {
+  double _dragOffsetY = 0.0;
 
-  @override
-  void initState() {
-    super.initState();
-    _popupAnimController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 280),
+  void _showDocumentActionSheet(BuildContext context, VehicleDocument doc) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        final isDark = Theme.of(context).brightness == Brightness.dark;
+        return SafeArea(
+          child: Container(
+            margin: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF1E293B) : Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.25),
+                  blurRadius: 20,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF2563EB).withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Icon(doc.documentType.icon, color: const Color(0xFF2563EB), size: 20),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              doc.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 15,
+                                color: isDark ? Colors.white : const Color(0xFF0F172A),
+                              ),
+                            ),
+                            if (doc.vehicleRegNo.isNotEmpty && doc.vehicleRegNo != 'General')
+                              Text(
+                                'Ref: ${doc.vehicleRegNo}',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: isDark ? Colors.white54 : const Color(0xFF64748B),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Divider(height: 1, color: isDark ? Colors.white10 : const Color(0xFFE2E8F0)),
+                ListTile(
+                  leading: const Icon(Icons.visibility_outlined, color: Color(0xFF2563EB)),
+                  title: const Text('View Document', style: TextStyle(fontWeight: FontWeight.w600)),
+                  onTap: () {
+                    Navigator.of(ctx).pop();
+                    Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => DocumentViewerScreen(document: doc),
+                    ));
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.delete_outline, color: Color(0xFFDC2626)),
+                  title: const Text('Delete Document',
+                      style: TextStyle(color: Color(0xFFDC2626), fontWeight: FontWeight.bold)),
+                  onTap: () async {
+                    Navigator.of(ctx).pop();
+                    await DocumentActionHelper.confirmAndDeleteDocument(
+                      context: context,
+                      ref: ref,
+                      document: doc,
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
-    _popupAnim = CurvedAnimation(
-      parent: _popupAnimController,
-      curve: Curves.easeOutBack,
-    );
-  }
-
-  @override
-  void dispose() {
-    _popupAnimController.dispose();
-    super.dispose();
-  }
-
-  void _enterPopupMode(String docId) {
-    setState(() => _popupDocId = docId);
-    _popupAnimController.forward(from: 0);
-  }
-
-  void _exitPopupMode() {
-    _popupAnimController.reverse().then((_) {
-      if (mounted) setState(() => _popupDocId = null);
-    });
   }
 
   @override
@@ -83,25 +149,94 @@ class _FolderContentsScreenState extends ConsumerState<FolderContentsScreen>
     final isLiquidGlass = ref.watch(liquidGlassEnabledProvider);
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
+    final docsAsync = ref.watch(vehicleDocumentsStreamProvider);
+    final allLiveDocs = docsAsync.value ?? [];
+    final liveDocIds = allLiveDocs.map((d) => d.id).toSet();
+
+    // Dynamically filter active documents so deleted items immediately vanish from folder view
+    final liveFolderDocs = widget.folder.documents
+        .where((d) => liveDocIds.contains(d.id))
+        .map((d) => allLiveDocs.firstWhere((live) => live.id == d.id, orElse: () => d))
+        .toList();
+
+    // Dynamically filter subFolders
+    final liveSubFolders = widget.folder.subFolders?.map((sub) {
+      final subDocs = sub.documents
+          .where((d) => liveDocIds.contains(d.id))
+          .map((d) => allLiveDocs.firstWhere((live) => live.id == d.id, orElse: () => d))
+          .toList();
+      return SmartFolder(
+        id: sub.id,
+        title: sub.title,
+        subtitle: sub.subtitle,
+        icon: sub.icon,
+        accentColor: sub.accentColor,
+        documents: subDocs,
+        subCategories: sub.subCategories,
+        subFolders: sub.subFolders,
+      );
+    }).where((sub) => sub.documents.isNotEmpty).toList();
+
+    // Dynamically filter subCategories
+    final Map<String, List<VehicleDocument>>? liveSubCategories;
+    if (widget.folder.subCategories != null) {
+      final map = <String, List<VehicleDocument>>{};
+      widget.folder.subCategories!.forEach((k, list) {
+        final filtered = list
+            .where((d) => liveDocIds.contains(d.id))
+            .map((d) => allLiveDocs.firstWhere((live) => live.id == d.id, orElse: () => d))
+            .toList();
+        if (filtered.isNotEmpty) map[k] = filtered;
+      });
+      liveSubCategories = map;
+    } else {
+      liveSubCategories = null;
+    }
+
+    final totalCount = liveSubFolders != null && liveSubFolders.isNotEmpty
+        ? liveSubFolders.length
+        : liveFolderDocs.length;
+
     return GestureDetector(
-      onTap: () {
-        if (_popupDocId != null) _exitPopupMode();
-        FocusScope.of(context).unfocus();
+      behavior: HitTestBehavior.translucent,
+      onVerticalDragUpdate: (details) {
+        if (details.primaryDelta != null && details.primaryDelta! > 0) {
+          setState(() {
+            _dragOffsetY = (_dragOffsetY + details.primaryDelta!).clamp(0.0, 400.0);
+          });
+        }
       },
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        body: LiquidGlassBackground(
-          isLiquidGlass: isLiquidGlass,
-          child: SafeArea(
-            child: Column(
-              children: [
-                _buildAppBar(isDark),
-                Expanded(
-                  child: widget.folder.subCategories != null
-                      ? _buildSubCategorized(isLiquidGlass, isDark)
-                      : _buildFlat(widget.folder.documents, isLiquidGlass, isDark),
+      onVerticalDragEnd: (details) {
+        if (_dragOffsetY > 90 || (details.primaryVelocity != null && details.primaryVelocity! > 500)) {
+          Navigator.of(context).pop();
+        } else {
+          setState(() => _dragOffsetY = 0.0);
+        }
+      },
+      onVerticalDragCancel: () => setState(() => _dragOffsetY = 0.0),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 100),
+        transform: Matrix4.translationValues(0.0, _dragOffsetY, 0.0),
+        child: Opacity(
+          opacity: (1.0 - (_dragOffsetY / 300.0)).clamp(0.0, 1.0),
+          child: Scaffold(
+            backgroundColor: Colors.transparent,
+            body: LiquidGlassBackground(
+              isLiquidGlass: isLiquidGlass,
+              child: SafeArea(
+                child: Column(
+                  children: [
+                    _buildAppBar(isDark, totalCount, liveSubFolders != null && liveSubFolders.isNotEmpty),
+                    Expanded(
+                      child: liveSubFolders != null && liveSubFolders.isNotEmpty
+                          ? _buildSubFolders(liveSubFolders, isLiquidGlass, isDark)
+                          : (liveSubCategories != null
+                              ? _buildSubCategorizedWithDocs(liveSubCategories, isLiquidGlass, isDark)
+                              : _buildFlat(liveFolderDocs, isLiquidGlass, isDark)),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         ),
@@ -109,7 +244,7 @@ class _FolderContentsScreenState extends ConsumerState<FolderContentsScreen>
     );
   }
 
-  Widget _buildAppBar(bool isDark) {
+  Widget _buildAppBar(bool isDark, int count, bool isSubFolder) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 10, 16, 6),
       child: Row(
@@ -145,7 +280,9 @@ class _FolderContentsScreenState extends ConsumerState<FolderContentsScreen>
                   ),
                 ),
                 Text(
-                  '${widget.folder.documents.length} document${widget.folder.documents.length == 1 ? '' : 's'}',
+                  isSubFolder
+                      ? '$count vehicle folder${count == 1 ? '' : 's'}'
+                      : '$count document${count == 1 ? '' : 's'}',
                   style: TextStyle(
                     fontSize: 11,
                     color: isDark ? Colors.white54 : const Color(0xFF64748B),
@@ -159,8 +296,130 @@ class _FolderContentsScreenState extends ConsumerState<FolderContentsScreen>
     );
   }
 
-  Widget _buildSubCategorized(bool isLiquidGlass, bool isDark) {
-    final subCats = widget.folder.subCategories!;
+  Widget _buildSubFolders(
+      List<SmartFolder> subFolders, bool isLiquidGlass, bool isDark) {
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 80),
+      itemCount: subFolders.length,
+      itemBuilder: (context, i) {
+        final sub = subFolders[i];
+        return _buildFolderTile(
+          context: context,
+          folder: sub,
+          isDark: isDark,
+          isLiquidGlass: isLiquidGlass,
+        );
+      },
+    );
+  }
+
+  Widget _buildFolderTile({
+    required BuildContext context,
+    required SmartFolder folder,
+    required bool isDark,
+    required bool isLiquidGlass,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: GestureDetector(
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => FolderContentsScreen(folder: folder),
+          ),
+        ),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: isDark
+                ? folder.accentColor.withValues(alpha: 0.10)
+                : folder.accentColor.withValues(alpha: 0.05),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: folder.accentColor.withValues(alpha: isDark ? 0.35 : 0.25),
+              width: 1.2,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: folder.accentColor.withValues(alpha: 0.06),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      folder.accentColor.withValues(alpha: isDark ? 0.5 : 0.35),
+                      folder.accentColor.withValues(alpha: isDark ? 0.28 : 0.15),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: folder.accentColor.withValues(alpha: 0.4),
+                    width: 1.2,
+                  ),
+                ),
+                child: Icon(folder.icon, color: Colors.white, size: 26),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      folder.title,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: isDark ? Colors.white : const Color(0xFF0F172A),
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      folder.subtitle,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: isDark ? Colors.white60 : const Color(0xFF64748B),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: folder.accentColor.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  '${folder.documents.length}',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: folder.accentColor,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Icon(Icons.arrow_forward_ios_rounded,
+                  size: 13, color: isDark ? Colors.white30 : Colors.black26),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSubCategorizedWithDocs(
+      Map<String, List<VehicleDocument>> subCats, bool isLiquidGlass, bool isDark) {
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 110),
       child: Column(
@@ -230,163 +489,30 @@ class _FolderContentsScreenState extends ConsumerState<FolderContentsScreen>
 
   Widget _buildDocumentCard(
       VehicleDocument doc, bool isLiquidGlass, bool isDark) {
-    final isPopped = _popupDocId == doc.id;
-
-    final cardBody = _cardContent(doc, isDark);
-
-    Widget card = GestureDetector(
-      onTap: () {
-        if (_popupDocId != null) {
-          _exitPopupMode();
-        } else {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: GestureDetector(
+        onTap: () {
           Navigator.of(context).push(MaterialPageRoute(
             builder: (_) => DocumentViewerScreen(document: doc),
           ));
-        }
-      },
-      onLongPress: () => _enterPopupMode(doc.id),
-      child: AnimatedBuilder(
-        animation: _popupAnim,
-        builder: (context, child) {
-          final scale = isPopped ? (1.0 + 0.045 * _popupAnim.value) : 1.0;
-          return Transform.scale(
-            scale: scale,
-            child: child,
-          );
         },
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: isPopped
-                    ? [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.28),
-                          blurRadius: 22,
-                          spreadRadius: 2,
-                          offset: const Offset(0, 10),
-                        )
-                      ]
-                    : [],
-              ),
-              child: cardBody,
-            ),
-            if (isPopped) ...[
-              // Swipe-to-delete hint strip at bottom
-              Positioned(
-                bottom: 0,
-                left: 0,
-                right: 0,
-                child: AnimatedBuilder(
-                  animation: _popupAnim,
-                  builder: (_, __) => Opacity(
-                    opacity: _popupAnim.value,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 5),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFDC2626).withValues(alpha: 0.88),
-                        borderRadius:
-                            const BorderRadius.vertical(bottom: Radius.circular(16)),
-                      ),
-                      child: const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.swipe_left_rounded, color: Colors.white, size: 13),
-                          SizedBox(width: 4),
-                          Text(
-                            'Swipe left to delete',
-                            style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              // iOS-style × badge top-right
-              Positioned(
-                top: -9,
-                right: -9,
-                child: AnimatedBuilder(
-                  animation: _popupAnim,
-                  builder: (_, child) => Transform.scale(
-                    scale: _popupAnim.value,
-                    child: child,
-                  ),
-                  child: GestureDetector(
-                    onTap: () async {
-                      final ok =
-                          await DocumentActionHelper.confirmAndDeleteDocument(
-                        context: context,
-                        ref: ref,
-                        document: doc,
-                      );
-                      if (ok && mounted) _exitPopupMode();
-                    },
-                    child: Container(
-                      width: 28,
-                      height: 28,
-                      decoration: const BoxDecoration(
-                        color: Color(0xFFDC2626),
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                              color: Colors.black38,
-                              blurRadius: 6,
-                              offset: Offset(0, 2))
-                        ],
-                      ),
-                      child: const Icon(Icons.close_rounded,
-                          color: Colors.white, size: 16),
-                    ),
-                  ),
-                ),
-              ),
+        onLongPress: () => _showDocumentActionSheet(context, doc),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.04),
+                blurRadius: 6,
+                offset: const Offset(0, 2),
+              )
             ],
-          ],
+          ),
+          child: _cardContent(doc, isDark),
         ),
       ),
     );
-
-    if (isPopped) {
-      card = Dismissible(
-        key: ValueKey('fd_dismiss_${doc.id}'),
-        direction: DismissDirection.endToStart,
-        background: Container(
-          alignment: Alignment.centerRight,
-          padding: const EdgeInsets.only(right: 20),
-          decoration: BoxDecoration(
-            color: const Color(0xFFDC2626),
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: const Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.delete_outline, color: Colors.white, size: 24),
-              SizedBox(width: 6),
-              Text('Delete',
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 14)),
-            ],
-          ),
-        ),
-        confirmDismiss: (_) =>
-            DocumentActionHelper.confirmAndDeleteDocument(
-              context: context, ref: ref, document: doc),
-        onDismissed: (_) => setState(() => _popupDocId = null),
-        child: card,
-      );
-    }
-
-    return card;
   }
 
   Widget _cardContent(VehicleDocument doc, bool isDark) {

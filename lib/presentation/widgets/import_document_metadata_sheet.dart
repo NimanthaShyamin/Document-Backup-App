@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 
 import '../../core/theme/app_preferences_provider.dart';
 import '../../core/theme/liquid_glass_theme.dart';
+import '../../data/datasources/remote/gemini_document_extraction_service.dart';
 import '../../domain/entities/document_type.dart';
 import '../controllers/document_providers.dart';
 
@@ -129,13 +130,19 @@ class _ImportDocumentMetadataSheetState
     }
 
     try {
-      final details = await geminiService.extractDetailsFromFile(widget.sourceFile);
+      final details = await geminiService
+          .extractDetailsFromFile(widget.sourceFile)
+          .timeout(
+            const Duration(seconds: 35),
+            onTimeout: () => ExtractedDocumentDetails.error(
+              'Gemini AI scan timed out. Please enter details manually below.',
+            ),
+          );
 
       if (!mounted) return;
 
       if (details.hasAnyDetail) {
         setState(() {
-          _isGeminiAnalyzing = false;
           _geminiAttempted = true;
           _geminiFoundDetails = true;
 
@@ -159,7 +166,6 @@ class _ImportDocumentMetadataSheetState
         });
       } else {
         setState(() {
-          _isGeminiAnalyzing = false;
           _geminiAttempted = true;
           _geminiFoundDetails = false;
           _geminiStatusMessage = details.errorMessage ??
@@ -169,11 +175,16 @@ class _ImportDocumentMetadataSheetState
     } catch (e) {
       if (mounted) {
         setState(() {
-          _isGeminiAnalyzing = false;
           _geminiAttempted = true;
           _geminiFoundDetails = false;
           _geminiStatusMessage =
               'Gemini scanning encountered an issue ($e). Please manually enter document details below.';
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isGeminiAnalyzing = false;
         });
       }
     }
@@ -590,21 +601,45 @@ class _ImportDocumentMetadataSheetState
           borderRadius: BorderRadius.circular(14),
           border: Border.all(color: const Color(0xFF38BDF8).withValues(alpha: 0.35)),
         ),
-        child: const Row(
+        child: Row(
           children: [
-            SizedBox(
+            const SizedBox(
               width: 16,
               height: 16,
               child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF38BDF8)),
             ),
-            SizedBox(width: 12),
-            Expanded(
+            const SizedBox(width: 12),
+            const Expanded(
               child: Text(
                 'Gemini AI is analyzing document details...',
                 style: TextStyle(
                   color: Color(0xFF38BDF8),
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            GestureDetector(
+              onTap: () {
+                setState(() {
+                  _isGeminiAnalyzing = false;
+                  _geminiAttempted = true;
+                  _geminiStatusMessage = 'Analysis skipped. Please enter details manually.';
+                });
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Text(
+                  'Skip',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             ),
@@ -656,8 +691,10 @@ class _ImportDocumentMetadataSheetState
     }
 
     final isKeyError = _geminiStatusMessage != null &&
-        (_geminiStatusMessage!.toLowerCase().contains('api key') ||
-            _geminiStatusMessage!.toLowerCase().contains('invalid') ||
+        (_geminiStatusMessage!.toLowerCase().contains('api key not valid') ||
+            _geminiStatusMessage!.toLowerCase().contains('api_key_invalid') ||
+            _geminiStatusMessage!.toLowerCase().contains('invalid api key') ||
+            _geminiStatusMessage!.toLowerCase().contains('api key is not configured') ||
             _geminiStatusMessage!.contains('AIzaSy'));
 
     final boxColor = isKeyError

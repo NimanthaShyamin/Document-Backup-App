@@ -18,7 +18,7 @@ class ChatAnswer {
   });
 
   factory ChatAnswer.notFound(String question) {
-    return ChatAnswer(
+    return const ChatAnswer(
       answer:
           'I couldn\'t find any information about that in your documents. '
           'Make sure the relevant document is imported into the vault.',
@@ -148,9 +148,34 @@ Respond ONLY with this exact JSON (no markdown, no extra text):
     return buf.toString();
   }
 
+  static bool _isInvalidChatModel(String modelName) {
+    final lower = modelName.toLowerCase();
+    return lower.contains('tts') ||
+        lower.contains('audio') ||
+        lower.contains('embedding') ||
+        lower.contains('imagen') ||
+        lower.contains('aqa') ||
+        lower.contains('realtime');
+  }
+
   Future<List<String>> _getModels(String key) async {
     final candidates = <String>[];
-    if (_cachedModel != null) candidates.add(_cachedModel!);
+    if (_cachedModel != null && !_isInvalidChatModel(_cachedModel!)) {
+      candidates.add(_cachedModel!);
+    }
+
+    const stableModels = [
+      'gemini-flash-lite-latest',
+      'gemini-3.1-flash-lite',
+      'gemini-3.8-flash',
+      'gemini-3-flash-preview',
+      'gemini-3.6-flash',
+      'gemini-3.5-flash-lite',
+      'gemini-flash-latest',
+    ];
+    for (final sm in stableModels) {
+      if (!candidates.contains(sm)) candidates.add(sm);
+    }
 
     try {
       final res = await http
@@ -166,31 +191,14 @@ Respond ONLY with this exact JSON (no markdown, no extra text):
               (m['supportedGenerationMethods'] as List?)?.cast<String>() ?? [];
           if (name != null && methods.contains('generateContent')) {
             final clean = name.startsWith('models/') ? name.substring(7) : name;
-            if (!candidates.contains(clean)) candidates.add(clean);
+            if (!_isInvalidChatModel(clean) && !candidates.contains(clean)) {
+              candidates.add(clean);
+            }
           }
-        }
-        if (candidates.length > 1) {
-          candidates.sort((a, b) {
-            final af = a.contains('flash');
-            final bf = b.contains('flash');
-            if (af && !bf) return -1;
-            if (!af && bf) return 1;
-            return b.compareTo(a);
-          });
-          return candidates;
         }
       }
     } catch (_) {}
 
-    const fallbacks = [
-      'gemini-2.5-flash',
-      'gemini-2.0-flash',
-      'gemini-1.5-flash-latest',
-      'gemini-1.5-pro',
-    ];
-    for (final f in fallbacks) {
-      if (!candidates.contains(f)) candidates.add(f);
-    }
     return candidates;
   }
 
@@ -212,7 +220,7 @@ Respond ONLY with this exact JSON (no markdown, no extra text):
               ],
               'generationConfig': {
                 'temperature': 0.2,
-                'response_mime_type': 'application/json',
+                'responseMimeType': 'application/json',
               }
             }),
           )
