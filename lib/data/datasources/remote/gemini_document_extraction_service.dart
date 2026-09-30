@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:google_generative_ai/google_generative_ai.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../../domain/entities/document_type.dart';
 
 /// Data class holding metadata extracted by Gemini Vision/Multimodal AI.
@@ -81,11 +82,11 @@ class GeminiDocumentExtractionService {
   static const List<String> _verifiedVisionModels = [
     'gemini-flash-lite-latest',
     'gemini-3.1-flash-lite',
-    'gemini-3.8-flash',
-    'gemini-3-flash-preview',
-    'gemini-3.6-flash',
     'gemini-3.5-flash-lite',
     'gemini-flash-latest',
+    'gemini-3.6-flash',
+    'gemini-3.8-flash',
+    'gemini-3-flash-preview',
   ];
 
   /// Checks if a model is non-vision (e.g. TTS, audio-only, embedding).
@@ -99,9 +100,23 @@ class GeminiDocumentExtractionService {
         lower.contains('realtime');
   }
 
+  static void _saveWorkingModel(String modelName) {
+    _cachedWorkingModel = modelName;
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setString('pref_cached_vision_model', modelName);
+    }).catchError((_) {});
+  }
+
   /// Discovers available Gemini models for this API key or returns a prioritized fallback list.
   Future<List<String>> _getAvailableModels(String effectiveKey) async {
     final candidates = <String>[];
+    if (_cachedWorkingModel == null) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        _cachedWorkingModel = prefs.getString('pref_cached_vision_model');
+      } catch (_) {}
+    }
+
     if (_cachedWorkingModel != null && !_isInvalidForVision(_cachedWorkingModel!)) {
       candidates.add(_cachedWorkingModel!);
     }
@@ -190,7 +205,7 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
           if (responseText != null && responseText.trim().isNotEmpty) {
             final parsed = _parseJsonDetails(responseText);
             if (parsed != null) {
-              _cachedWorkingModel = modelName;
+              _saveWorkingModel(modelName);
               return parsed;
             }
           }
@@ -207,6 +222,18 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
           // If this model does not support images, skip immediately to the next candidate
           if (sdkErrorStr.contains('Image input modality is not enabled')) {
             if (_cachedWorkingModel == modelName) _cachedWorkingModel = null;
+            continue;
+          }
+
+          // If this model is experiencing high demand / 503 / 429 or timeout, skip to next candidate immediately
+          final isUnavailable = sdkErrorStr.contains('503') ||
+              sdkErrorStr.contains('UNAVAILABLE') ||
+              sdkErrorStr.contains('high demand') ||
+              sdkErrorStr.contains('RESOURCE_EXHAUSTED') ||
+              sdkErrorStr.contains('429') ||
+              sdkErrorStr.contains('timed out');
+          if (isUnavailable) {
+            developer.log('[GeminiExtractionService] Model $modelName is unavailable or timed out. Skipping to next candidate.');
             continue;
           }
 
@@ -236,7 +263,7 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
               // Proceed to next candidate model
               continue;
             } else {
-              _cachedWorkingModel = modelName;
+              _saveWorkingModel(modelName);
               return restResult;
             }
           }

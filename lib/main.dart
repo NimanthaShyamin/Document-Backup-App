@@ -2,6 +2,7 @@ import 'dart:developer' as developer;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 import 'core/hardware/notification_engine.dart';
 import 'core/storage/file_storage_manager.dart';
@@ -79,9 +80,15 @@ Future<void> main() async {
     developer.log('WorkManager initialization note: $e');
   }
 
+  // Preload SharedPreferences synchronously for instant preference availability
+  final prefs = await SharedPreferences.getInstance();
+
   runApp(
-    const ProviderScope(
-      child: VehicleDocumentVaultApp(),
+    ProviderScope(
+      overrides: [
+        sharedPreferencesProvider.overrideWithValue(prefs),
+      ],
+      child: const VehicleDocumentVaultApp(),
     ),
   );
 }

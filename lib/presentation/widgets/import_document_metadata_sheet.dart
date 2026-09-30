@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/theme/app_preferences_provider.dart';
 import '../../core/theme/liquid_glass_theme.dart';
@@ -114,7 +115,18 @@ class _ImportDocumentMetadataSheetState
   }
 
   Future<void> _analyzeWithGemini() async {
-    final geminiService = ref.read(geminiDocumentExtractionServiceProvider);
+    var geminiService = ref.read(geminiDocumentExtractionServiceProvider);
+
+    if (!geminiService.isConfigured) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final savedKey = prefs.getString(keyGeminiApiKey);
+        if (savedKey != null && savedKey.trim().isNotEmpty) {
+          ref.read(geminiApiKeyProvider.notifier).setKey(savedKey.trim());
+          geminiService = GeminiDocumentExtractionService(apiKey: savedKey.trim());
+        }
+      } catch (_) {}
+    }
 
     if (!geminiService.isConfigured) {
       if (mounted) {
@@ -133,7 +145,7 @@ class _ImportDocumentMetadataSheetState
       final details = await geminiService
           .extractDetailsFromFile(widget.sourceFile)
           .timeout(
-            const Duration(seconds: 35),
+            const Duration(seconds: 45),
             onTimeout: () => ExtractedDocumentDetails.error(
               'Gemini AI scan timed out. Please enter details manually below.',
             ),
