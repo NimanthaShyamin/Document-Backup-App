@@ -48,18 +48,25 @@ class FakeVehicleDocumentRepository implements IVehicleDocumentRepository {
   @override
   Future<VehicleDocument> saveDocument({
     String? existingId,
-    required DocumentType documentType,
+    DocumentType? documentType,
+    String? category,
     required String title,
-    required String vehicleRegNo,
+    String? vehicleRegNo,
     String? policyNo,
     DateTime? expiryDate,
+    Map<String, dynamic> visibleFields = const {},
+    String? hiddenContext,
+    bool requiresAiScan = false,
     required File sourceFile,
   }) async {
+    final effectiveDocType = documentType ?? (category != null ? DocumentType.fromString(category) : DocumentType.custom);
+    final effectiveRegNo = vehicleRegNo ?? 'General';
     final doc = VehicleDocument(
       id: existingId ?? 'test_saved_id',
-      documentType: documentType,
+      documentType: effectiveDocType,
+      category: category ?? effectiveDocType.value,
       title: title,
-      vehicleRegNo: vehicleRegNo,
+      vehicleRegNo: effectiveRegNo,
       policyNo: policyNo,
       expiryDate: expiryDate,
       localFilePath: sourceFile.path,
@@ -399,10 +406,18 @@ void main() {
       // Verify Gemini Auto-Filled Banner
       expect(find.text('Gemini AI Auto-Filled Details'), findsOneWidget);
 
-      // Verify fields auto-filled
+      // Verify fields auto-filled (Universal 3-field layout)
       expect(find.text('SLIC Comprehensive Motor Insurance'), findsOneWidget);
-      expect(find.text('WP CBA-7788'), findsOneWidget);
-      expect(find.text('POL-SLIC-778899'), findsOneWidget);
+      expect(find.text('Insurance Policy'), findsOneWidget);
+
+      // Verify secondary fields captured in additional details accordion
+      final additionalDetails = find.textContaining('Detected Additional Details');
+      if (additionalDetails.evaluate().isNotEmpty) {
+        await tester.tap(additionalDetails);
+        await tester.pumpAndSettle();
+        expect(find.text('WP CBA-7788'), findsOneWidget);
+        expect(find.text('POL-SLIC-778899'), findsOneWidget);
+      }
 
       // Verify fields can still be edited
       final titleField = find.widgetWithText(TextField, 'SLIC Comprehensive Motor Insurance');

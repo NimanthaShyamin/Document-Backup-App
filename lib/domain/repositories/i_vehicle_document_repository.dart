@@ -2,7 +2,7 @@ import 'dart:io';
 import '../entities/document_type.dart';
 import '../entities/vehicle_document.dart';
 
-/// Contract for vehicle document storage, retrieval, and reactive watching.
+/// Contract for document storage, retrieval, and reactive watching in the Universal Vault.
 abstract class IVehicleDocumentRepository {
   /// Continuous reactive stream of all local documents directly from SQLite WAL cache.
   Stream<List<VehicleDocument>> watchAllDocuments();
@@ -13,11 +13,15 @@ abstract class IVehicleDocumentRepository {
   /// Saves or updates a document locally, copies to sandboxed vault, schedules alerts, and enqueues sync.
   Future<VehicleDocument> saveDocument({
     String? existingId,
-    required DocumentType documentType,
+    DocumentType? documentType,
+    String? category,
     required String title,
-    required String vehicleRegNo,
+    String? vehicleRegNo,
     String? policyNo,
     DateTime? expiryDate,
+    Map<String, dynamic> visibleFields = const {},
+    String? hiddenContext,
+    bool requiresAiScan = false,
     required File sourceFile,
   });
 

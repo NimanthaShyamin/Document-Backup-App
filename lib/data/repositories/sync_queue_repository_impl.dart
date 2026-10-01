@@ -129,6 +129,9 @@ class SyncQueueRepository implements ISyncQueueRepository {
                   syncStatus: 'download_pending',
                   lastModifiedTimestamp: remote.clientModified.millisecondsSinceEpoch,
                   createdAt: DateTime.now().millisecondsSinceEpoch,
+                  category: Value(remote.documentType.isNotEmpty ? remote.documentType : 'General'),
+                  visibleFields: const Value('{}'),
+                  requiresAiScan: const Value(false),
                 ),
               );
 

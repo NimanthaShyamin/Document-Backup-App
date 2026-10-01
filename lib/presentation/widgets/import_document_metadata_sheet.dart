@@ -8,12 +8,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/theme/app_preferences_provider.dart';
 import '../../core/theme/liquid_glass_theme.dart';
 import '../../data/datasources/remote/gemini_document_extraction_service.dart';
+import '../../domain/entities/document_category.dart';
 import '../../domain/entities/document_type.dart';
 import '../controllers/document_providers.dart';
 
-/// Bottom sheet dialog for reviewing, editing, and confirming imported vehicle document metadata.
-/// Supports dynamic Apple Liquid Glass styling (Screenshot 4) and eye-friendly blended theme when off.
-/// Features in-sheet validation banners, empty category defaults, and guaranteed sheet dismissal upon save.
+/// Bottom sheet dialog for reviewing, editing, and confirming imported document metadata.
+/// Refactored to strictly present a clean 3-field layout (Title, Category, Expiry Date),
+/// while preserving secondary AI-detected metadata in visibleFields and hiddenContext.
 class ImportDocumentMetadataSheet extends ConsumerStatefulWidget {
   final File sourceFile;
   final String originalName;
@@ -61,12 +62,14 @@ class ImportDocumentMetadataSheet extends ConsumerStatefulWidget {
 class _ImportDocumentMetadataSheetState
     extends ConsumerState<ImportDocumentMetadataSheet> {
   late final TextEditingController _titleController;
-  late final TextEditingController _regNoController;
-  late final TextEditingController _policyController;
 
-  // Category starts strictly empty (null) - no fake guesses
-  DocumentType? _selectedType;
+  // Primary 3 fields: Title, Category, Expiry Date
+  DocumentCategory? _selectedCategory;
   DateTime? _selectedExpiry;
+
+  // Flexible extracted fields and silent AI context
+  Map<String, dynamic> _visibleFields = {};
+  String? _hiddenContext;
 
   bool _isGeminiAnalyzing = true;
   bool _geminiAttempted = false;
@@ -80,16 +83,12 @@ class _ImportDocumentMetadataSheetState
   void initState() {
     super.initState();
     _titleController = TextEditingController();
-    _regNoController = TextEditingController();
-    _policyController = TextEditingController();
 
     // Category strictly null by default until chosen or detected
-    _selectedType = null;
+    _selectedCategory = null;
     _selectedExpiry = null;
 
     _titleController.addListener(_clearValidationError);
-    _regNoController.addListener(_clearValidationError);
-    _policyController.addListener(_clearValidationError);
 
     // Run Gemini AI extraction in post-frame callback
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -106,11 +105,7 @@ class _ImportDocumentMetadataSheetState
   @override
   void dispose() {
     _titleController.removeListener(_clearValidationError);
-    _regNoController.removeListener(_clearValidationError);
-    _policyController.removeListener(_clearValidationError);
     _titleController.dispose();
-    _regNoController.dispose();
-    _policyController.dispose();
     super.dispose();
   }
 
@@ -161,18 +156,15 @@ class _ImportDocumentMetadataSheetState
           if (details.title != null && details.title!.isNotEmpty) {
             _titleController.text = details.title!;
           }
-          if (details.vehicleRegNo != null && details.vehicleRegNo!.isNotEmpty) {
-            _regNoController.text = details.vehicleRegNo!;
-          }
-          if (details.policyNo != null && details.policyNo!.isNotEmpty) {
-            _policyController.text = details.policyNo!;
-          }
-          if (details.documentType != null) {
-            _selectedType = details.documentType!;
+          if (details.category != null || details.documentType != null) {
+            _selectedCategory = DocumentCategory.resolve(details.category ?? details.documentType?.value);
           }
           if (details.expiryDate != null) {
             _selectedExpiry = details.expiryDate!;
           }
+          _visibleFields = Map<String, dynamic>.from(details.visibleFields);
+          _hiddenContext = details.hiddenContext;
+
           _geminiStatusMessage =
               'Gemini AI auto-detected document metadata. You may verify and edit any field below.';
         });
@@ -204,13 +196,11 @@ class _ImportDocumentMetadataSheetState
 
   Future<void> _handleSave() async {
     final title = _titleController.text.trim();
-    final regNo = _regNoController.text.trim();
-    final effectiveRegNo = regNo.isNotEmpty ? regNo : 'General';
 
-    // In-sheet validation: Only Title and Category required for universal documents
-    if (title.isEmpty || _selectedType == null) {
+    // In-sheet validation: Title and Category are required
+    if (title.isEmpty || _selectedCategory == null) {
       setState(() {
-        if (title.isEmpty && _selectedType == null) {
+        if (title.isEmpty && _selectedCategory == null) {
           _validationError = 'Document Title and Category are required.';
         } else if (title.isEmpty) {
           _validationError = 'Document Title is required.';
@@ -229,11 +219,12 @@ class _ImportDocumentMetadataSheetState
     try {
       final repo = ref.read(vehicleDocumentRepositoryProvider);
       await repo.saveDocument(
-        documentType: _selectedType!,
+        category: _selectedCategory!.id,
+        documentType: DocumentType.fromString(_selectedCategory!.id),
         title: title,
-        vehicleRegNo: effectiveRegNo,
-        policyNo: _policyController.text.trim().isEmpty ? null : _policyController.text.trim(),
         expiryDate: _selectedExpiry,
+        visibleFields: _visibleFields,
+        hiddenContext: _hiddenContext,
         sourceFile: widget.sourceFile,
       );
 
@@ -251,6 +242,80 @@ class _ImportDocumentMetadataSheetState
         });
       }
     }
+  }
+
+  String _formatFieldKey(String key) {
+    switch (key) {
+      case 'vehicleRegNo':
+        return 'Registration No';
+      case 'policyNo':
+        return 'Policy / Ref No';
+      case 'holderName':
+        return 'Holder Name';
+      case 'idNumber':
+        return 'ID Number';
+      case 'issuer':
+        return 'Issuer';
+      case 'amountDue':
+        return 'Amount Due';
+      default:
+        final result = key.replaceAllMapped(
+          RegExp(r'([A-Z])'),
+          (match) => ' ${match.group(0)}',
+        );
+        return result.substring(0, 1).toUpperCase() + result.substring(1);
+    }
+  }
+
+  Widget _buildQuickDateChip({
+    required String label,
+    required DateTime? targetDate,
+    required bool isLiquidGlass,
+    required bool isDark,
+  }) {
+    final isSelected = (targetDate == null && _selectedExpiry == null) ||
+        (targetDate != null &&
+            _selectedExpiry != null &&
+            _selectedExpiry!.year == targetDate.year &&
+            _selectedExpiry!.month == targetDate.month &&
+            _selectedExpiry!.day == targetDate.day);
+
+    return InkWell(
+      onTap: () {
+        setState(() {
+          _selectedExpiry = targetDate;
+        });
+      },
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? LiquidGlassTheme.accentAmber.withValues(alpha: 0.22)
+              : (isLiquidGlass
+                  ? const Color(0x15FFFFFF)
+                  : (isDark ? const Color(0xFF1E2433) : const Color(0xFFF1F5F9))),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: isSelected
+                ? LiquidGlassTheme.accentAmber
+                : (isLiquidGlass
+                    ? const Color(0x22FFFFFF)
+                    : (isDark ? const Color(0xFF2B3548) : const Color(0xFFCBD5E1))),
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isSelected
+                ? LiquidGlassTheme.accentAmber
+                : (isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B)),
+            fontSize: 11,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -301,8 +366,8 @@ class _ImportDocumentMetadataSheetState
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
                   color: isLiquidGlass
-                      ? (isDark ? const Color(0x33FFFFFF) : const Color(0x66FFFFFF))
-                      : (isDark ? const Color(0xFF2B3548) : const Color(0xFFE2E8F0)),
+                    ? (isDark ? const Color(0x33FFFFFF) : const Color(0x66FFFFFF))
+                    : (isDark ? const Color(0xFF2B3548) : const Color(0xFFE2E8F0)),
                 ),
               ),
               child: Row(
@@ -325,7 +390,7 @@ class _ImportDocumentMetadataSheetState
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Secure Document Import',
+                          'Universal Document Vault',
                           style: TextStyle(
                             color: textColor,
                             fontSize: 16,
@@ -354,7 +419,7 @@ class _ImportDocumentMetadataSheetState
             _buildGeminiStatusBox(isLiquidGlass, isDark),
             const SizedBox(height: 16),
 
-            // Title Field (Required & Fully Editable)
+            // 1. Title Field (Required & Fully Editable)
             TextField(
               controller: _titleController,
               style: TextStyle(color: textColor, fontSize: 14),
@@ -362,30 +427,16 @@ class _ImportDocumentMetadataSheetState
                 context: context,
                 isLiquidGlass: isLiquidGlass,
                 labelText: 'Document Title *',
-                hintText: 'e.g. Annual Revenue License',
+                hintText: 'e.g. National ID, Electric Bill, Passport',
                 prefixIcon: const Icon(Icons.title, color: LiquidGlassTheme.accentAmber, size: 20),
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 14),
 
-            // Optional Reference / Reg / ID No Field
-            TextField(
-              controller: _regNoController,
-              style: TextStyle(color: textColor, fontSize: 14),
-              decoration: LiquidGlassTheme.fieldDecoration(
-                context: context,
-                isLiquidGlass: isLiquidGlass,
-                labelText: 'Reference / Reg / ID No (Optional)',
-                hintText: 'e.g. NIC-1234, PNR-998, CAB-1234',
-                prefixIcon: Icon(Icons.tag, color: isDark ? LiquidGlassTheme.accentElectricBlue : const Color(0xFF2563EB), size: 20),
-              ),
-            ),
-            const SizedBox(height: 12),
-
-            // Document Category Selector (Strictly empty default, user or AI picks)
-            DropdownButtonFormField<DocumentType?>(
-              key: ValueKey(_selectedType),
-              initialValue: _selectedType,
+            // 2. Document Category Selector (Strictly empty default, user or AI picks)
+            DropdownButtonFormField<DocumentCategory?>(
+              key: ValueKey(_selectedCategory?.id),
+              initialValue: _selectedCategory,
               dropdownColor: isLiquidGlass
                   ? const Color(0xFF161A26)
                   : (isDark ? const Color(0xFF1B2230) : const Color(0xFFF1F5F9)),
@@ -397,7 +448,11 @@ class _ImportDocumentMetadataSheetState
                 context: context,
                 isLiquidGlass: isLiquidGlass,
                 labelText: 'Document Category *',
-                prefixIcon: const Icon(Icons.category_outlined, color: LiquidGlassTheme.accentAmber, size: 20),
+                prefixIcon: Icon(
+                  _selectedCategory?.icon ?? Icons.category_outlined,
+                  color: _selectedCategory?.color ?? LiquidGlassTheme.accentAmber,
+                  size: 20,
+                ),
               ),
               hint: Text(
                 'Select Document Category',
@@ -406,42 +461,40 @@ class _ImportDocumentMetadataSheetState
                   fontSize: 14,
                 ),
               ),
-              items: DocumentType.values.map((type) {
-                return DropdownMenuItem<DocumentType?>(
-                  value: type,
+              items: {
+                if (_selectedCategory != null &&
+                    !DocumentCategory.systemPresets.any((c) => c.id == _selectedCategory!.id))
+                  _selectedCategory!,
+                ...DocumentCategory.systemPresets,
+              }.map((category) {
+                return DropdownMenuItem<DocumentCategory?>(
+                  value: category,
                   child: Row(
                     children: [
-                      Icon(type.icon, size: 18, color: LiquidGlassTheme.accentAmber),
+                      Icon(
+                        category.icon,
+                        size: 18,
+                        color: category.color ?? LiquidGlassTheme.accentAmber,
+                      ),
                       const SizedBox(width: 10),
-                      Text(type.label, style: TextStyle(color: textColor)),
+                      Text(
+                        category.name,
+                        style: TextStyle(color: textColor),
+                      ),
                     ],
                   ),
                 );
               }).toList(),
               onChanged: (val) {
                 setState(() {
-                  _selectedType = val;
+                  _selectedCategory = val;
                   _validationError = null;
                 });
               },
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 14),
 
-            // Policy / Reference No (Optional & Fully Editable)
-            TextField(
-              controller: _policyController,
-              style: TextStyle(color: textColor, fontSize: 14),
-              decoration: LiquidGlassTheme.fieldDecoration(
-                context: context,
-                isLiquidGlass: isLiquidGlass,
-                labelText: 'Policy / Reference No (Optional)',
-                hintText: 'e.g. POL-99281',
-                prefixIcon: const Icon(Icons.tag, color: LiquidGlassTheme.accentAmber, size: 20),
-              ),
-            ),
-            const SizedBox(height: 12),
-
-            // Expiry Date Picker (Fully Editable)
+            // 3. Expiry Date Picker (Fully Editable)
             InkWell(
               onTap: () async {
                 final picked = await showDatePicker(
@@ -487,7 +540,7 @@ class _ImportDocumentMetadataSheetState
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Expiry Date',
+                            'Expiry Date (Optional)',
                             style: TextStyle(
                               color: subTextColor,
                               fontSize: 11,
@@ -516,6 +569,118 @@ class _ImportDocumentMetadataSheetState
                 ),
               ),
             ),
+            const SizedBox(height: 8),
+
+            // Quick Date selection chips
+            Row(
+              children: [
+                _buildQuickDateChip(
+                  label: '1 Year',
+                  targetDate: DateTime.now().add(const Duration(days: 365)),
+                  isLiquidGlass: isLiquidGlass,
+                  isDark: isDark,
+                ),
+                const SizedBox(width: 8),
+                _buildQuickDateChip(
+                  label: '6 Months',
+                  targetDate: DateTime.now().add(const Duration(days: 182)),
+                  isLiquidGlass: isLiquidGlass,
+                  isDark: isDark,
+                ),
+                const SizedBox(width: 8),
+                _buildQuickDateChip(
+                  label: 'No Expiry',
+                  targetDate: null,
+                  isLiquidGlass: isLiquidGlass,
+                  isDark: isDark,
+                ),
+              ],
+            ),
+
+            // Optional collapsible section if secondary AI details were detected
+            if (_visibleFields.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              Theme(
+                data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+                child: ExpansionTile(
+                  tilePadding: const EdgeInsets.symmetric(horizontal: 14),
+                  backgroundColor: isLiquidGlass
+                      ? const Color(0x15FFFFFF)
+                      : (isDark ? const Color(0xFF1B2230) : const Color(0xFFF8FAFC)),
+                  collapsedBackgroundColor: isLiquidGlass
+                      ? const Color(0x10FFFFFF)
+                      : (isDark ? const Color(0xFF1E2433) : const Color(0xFFF1F5F9)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    side: BorderSide(
+                      color: isLiquidGlass
+                          ? const Color(0x22FFFFFF)
+                          : (isDark ? const Color(0xFF2B3548) : const Color(0xFFE2E8F0)),
+                    ),
+                  ),
+                  collapsedShape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    side: BorderSide(
+                      color: isLiquidGlass
+                          ? const Color(0x22FFFFFF)
+                          : (isDark ? const Color(0xFF2B3548) : const Color(0xFFE2E8F0)),
+                    ),
+                  ),
+                  leading: const Icon(
+                    Icons.auto_awesome,
+                    color: LiquidGlassTheme.accentAmber,
+                    size: 18,
+                  ),
+                  title: Text(
+                    'Detected Additional Details (${_visibleFields.length})',
+                    style: TextStyle(
+                      color: textColor,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                      child: Column(
+                        children: _visibleFields.entries.map((entry) {
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                SizedBox(
+                                  width: 120,
+                                  child: Text(
+                                    _formatFieldKey(entry.key),
+                                    style: TextStyle(
+                                      color: subTextColor,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                                Expanded(
+                                  child: Text(
+                                    '${entry.value}',
+                                    style: TextStyle(
+                                      color: textColor,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
             const SizedBox(height: 16),
 
             // In-Sheet Error Message (Shown in front of the window)
@@ -748,7 +913,7 @@ class _ImportDocumentMetadataSheetState
                 const SizedBox(height: 3),
                 Text(
                   _geminiStatusMessage ??
-                      'Gemini AI could not detect document details. Please enter the vehicle and document details manually below.',
+                      'Please enter the document details below.',
                   style: TextStyle(
                     color: isDark ? Colors.white70 : const Color(0xFF334155),
                     fontSize: 11,

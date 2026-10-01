@@ -79,6 +79,38 @@ class $VehicleDocumentsTable extends VehicleDocuments
   late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
       'created_at', aliasedName, false,
       type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _categoryMeta =
+      const VerificationMeta('category');
+  @override
+  late final GeneratedColumn<String> category = GeneratedColumn<String>(
+      'category', aliasedName, false,
+      type: DriftSqlType.string,
+      requiredDuringInsert: false,
+      defaultValue: const Constant('General'));
+  static const VerificationMeta _visibleFieldsMeta =
+      const VerificationMeta('visibleFields');
+  @override
+  late final GeneratedColumn<String> visibleFields = GeneratedColumn<String>(
+      'visible_fields', aliasedName, false,
+      type: DriftSqlType.string,
+      requiredDuringInsert: false,
+      defaultValue: const Constant('{}'));
+  static const VerificationMeta _hiddenContextMeta =
+      const VerificationMeta('hiddenContext');
+  @override
+  late final GeneratedColumn<String> hiddenContext = GeneratedColumn<String>(
+      'hidden_context', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _requiresAiScanMeta =
+      const VerificationMeta('requiresAiScan');
+  @override
+  late final GeneratedColumn<bool> requiresAiScan = GeneratedColumn<bool>(
+      'requires_ai_scan', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'CHECK ("requires_ai_scan" IN (0, 1))'),
+      defaultValue: const Constant(false));
   @override
   List<GeneratedColumn> get $columns => [
         id,
@@ -92,7 +124,11 @@ class $VehicleDocumentsTable extends VehicleDocuments
         fileChecksumSha256,
         syncStatus,
         lastModifiedTimestamp,
-        createdAt
+        createdAt,
+        category,
+        visibleFields,
+        hiddenContext,
+        requiresAiScan
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -186,6 +222,28 @@ class $VehicleDocumentsTable extends VehicleDocuments
     } else if (isInserting) {
       context.missing(_createdAtMeta);
     }
+    if (data.containsKey('category')) {
+      context.handle(_categoryMeta,
+          category.isAcceptableOrUnknown(data['category']!, _categoryMeta));
+    }
+    if (data.containsKey('visible_fields')) {
+      context.handle(
+          _visibleFieldsMeta,
+          visibleFields.isAcceptableOrUnknown(
+              data['visible_fields']!, _visibleFieldsMeta));
+    }
+    if (data.containsKey('hidden_context')) {
+      context.handle(
+          _hiddenContextMeta,
+          hiddenContext.isAcceptableOrUnknown(
+              data['hidden_context']!, _hiddenContextMeta));
+    }
+    if (data.containsKey('requires_ai_scan')) {
+      context.handle(
+          _requiresAiScanMeta,
+          requiresAiScan.isAcceptableOrUnknown(
+              data['requires_ai_scan']!, _requiresAiScanMeta));
+    }
     return context;
   }
 
@@ -219,6 +277,14 @@ class $VehicleDocumentsTable extends VehicleDocuments
           DriftSqlType.int, data['${effectivePrefix}last_modified_timestamp'])!,
       createdAt: attachedDatabase.typeMapping
           .read(DriftSqlType.int, data['${effectivePrefix}created_at'])!,
+      category: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}category'])!,
+      visibleFields: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}visible_fields'])!,
+      hiddenContext: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}hidden_context']),
+      requiresAiScan: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}requires_ai_scan'])!,
     );
   }
 
@@ -242,6 +308,10 @@ class VehicleDocumentData extends DataClass
   final String syncStatus;
   final int lastModifiedTimestamp;
   final int createdAt;
+  final String category;
+  final String visibleFields;
+  final String? hiddenContext;
+  final bool requiresAiScan;
   const VehicleDocumentData(
       {required this.id,
       required this.documentType,
@@ -254,7 +324,11 @@ class VehicleDocumentData extends DataClass
       required this.fileChecksumSha256,
       required this.syncStatus,
       required this.lastModifiedTimestamp,
-      required this.createdAt});
+      required this.createdAt,
+      required this.category,
+      required this.visibleFields,
+      this.hiddenContext,
+      required this.requiresAiScan});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -276,6 +350,12 @@ class VehicleDocumentData extends DataClass
     map['sync_status'] = Variable<String>(syncStatus);
     map['last_modified_timestamp'] = Variable<int>(lastModifiedTimestamp);
     map['created_at'] = Variable<int>(createdAt);
+    map['category'] = Variable<String>(category);
+    map['visible_fields'] = Variable<String>(visibleFields);
+    if (!nullToAbsent || hiddenContext != null) {
+      map['hidden_context'] = Variable<String>(hiddenContext);
+    }
+    map['requires_ai_scan'] = Variable<bool>(requiresAiScan);
     return map;
   }
 
@@ -299,6 +379,12 @@ class VehicleDocumentData extends DataClass
       syncStatus: Value(syncStatus),
       lastModifiedTimestamp: Value(lastModifiedTimestamp),
       createdAt: Value(createdAt),
+      category: Value(category),
+      visibleFields: Value(visibleFields),
+      hiddenContext: hiddenContext == null && nullToAbsent
+          ? const Value.absent()
+          : Value(hiddenContext),
+      requiresAiScan: Value(requiresAiScan),
     );
   }
 
@@ -320,6 +406,10 @@ class VehicleDocumentData extends DataClass
       lastModifiedTimestamp:
           serializer.fromJson<int>(json['lastModifiedTimestamp']),
       createdAt: serializer.fromJson<int>(json['createdAt']),
+      category: serializer.fromJson<String>(json['category']),
+      visibleFields: serializer.fromJson<String>(json['visibleFields']),
+      hiddenContext: serializer.fromJson<String?>(json['hiddenContext']),
+      requiresAiScan: serializer.fromJson<bool>(json['requiresAiScan']),
     );
   }
   @override
@@ -338,6 +428,10 @@ class VehicleDocumentData extends DataClass
       'syncStatus': serializer.toJson<String>(syncStatus),
       'lastModifiedTimestamp': serializer.toJson<int>(lastModifiedTimestamp),
       'createdAt': serializer.toJson<int>(createdAt),
+      'category': serializer.toJson<String>(category),
+      'visibleFields': serializer.toJson<String>(visibleFields),
+      'hiddenContext': serializer.toJson<String?>(hiddenContext),
+      'requiresAiScan': serializer.toJson<bool>(requiresAiScan),
     };
   }
 
@@ -353,7 +447,11 @@ class VehicleDocumentData extends DataClass
           String? fileChecksumSha256,
           String? syncStatus,
           int? lastModifiedTimestamp,
-          int? createdAt}) =>
+          int? createdAt,
+          String? category,
+          String? visibleFields,
+          Value<String?> hiddenContext = const Value.absent(),
+          bool? requiresAiScan}) =>
       VehicleDocumentData(
         id: id ?? this.id,
         documentType: documentType ?? this.documentType,
@@ -368,6 +466,11 @@ class VehicleDocumentData extends DataClass
         lastModifiedTimestamp:
             lastModifiedTimestamp ?? this.lastModifiedTimestamp,
         createdAt: createdAt ?? this.createdAt,
+        category: category ?? this.category,
+        visibleFields: visibleFields ?? this.visibleFields,
+        hiddenContext:
+            hiddenContext.present ? hiddenContext.value : this.hiddenContext,
+        requiresAiScan: requiresAiScan ?? this.requiresAiScan,
       );
   VehicleDocumentData copyWithCompanion(VehicleDocumentsCompanion data) {
     return VehicleDocumentData(
@@ -396,6 +499,16 @@ class VehicleDocumentData extends DataClass
           ? data.lastModifiedTimestamp.value
           : this.lastModifiedTimestamp,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      category: data.category.present ? data.category.value : this.category,
+      visibleFields: data.visibleFields.present
+          ? data.visibleFields.value
+          : this.visibleFields,
+      hiddenContext: data.hiddenContext.present
+          ? data.hiddenContext.value
+          : this.hiddenContext,
+      requiresAiScan: data.requiresAiScan.present
+          ? data.requiresAiScan.value
+          : this.requiresAiScan,
     );
   }
 
@@ -413,7 +526,11 @@ class VehicleDocumentData extends DataClass
           ..write('fileChecksumSha256: $fileChecksumSha256, ')
           ..write('syncStatus: $syncStatus, ')
           ..write('lastModifiedTimestamp: $lastModifiedTimestamp, ')
-          ..write('createdAt: $createdAt')
+          ..write('createdAt: $createdAt, ')
+          ..write('category: $category, ')
+          ..write('visibleFields: $visibleFields, ')
+          ..write('hiddenContext: $hiddenContext, ')
+          ..write('requiresAiScan: $requiresAiScan')
           ..write(')'))
         .toString();
   }
@@ -431,7 +548,11 @@ class VehicleDocumentData extends DataClass
       fileChecksumSha256,
       syncStatus,
       lastModifiedTimestamp,
-      createdAt);
+      createdAt,
+      category,
+      visibleFields,
+      hiddenContext,
+      requiresAiScan);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -447,7 +568,11 @@ class VehicleDocumentData extends DataClass
           other.fileChecksumSha256 == this.fileChecksumSha256 &&
           other.syncStatus == this.syncStatus &&
           other.lastModifiedTimestamp == this.lastModifiedTimestamp &&
-          other.createdAt == this.createdAt);
+          other.createdAt == this.createdAt &&
+          other.category == this.category &&
+          other.visibleFields == this.visibleFields &&
+          other.hiddenContext == this.hiddenContext &&
+          other.requiresAiScan == this.requiresAiScan);
 }
 
 class VehicleDocumentsCompanion extends UpdateCompanion<VehicleDocumentData> {
@@ -463,6 +588,10 @@ class VehicleDocumentsCompanion extends UpdateCompanion<VehicleDocumentData> {
   final Value<String> syncStatus;
   final Value<int> lastModifiedTimestamp;
   final Value<int> createdAt;
+  final Value<String> category;
+  final Value<String> visibleFields;
+  final Value<String?> hiddenContext;
+  final Value<bool> requiresAiScan;
   final Value<int> rowid;
   const VehicleDocumentsCompanion({
     this.id = const Value.absent(),
@@ -477,6 +606,10 @@ class VehicleDocumentsCompanion extends UpdateCompanion<VehicleDocumentData> {
     this.syncStatus = const Value.absent(),
     this.lastModifiedTimestamp = const Value.absent(),
     this.createdAt = const Value.absent(),
+    this.category = const Value.absent(),
+    this.visibleFields = const Value.absent(),
+    this.hiddenContext = const Value.absent(),
+    this.requiresAiScan = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   VehicleDocumentsCompanion.insert({
@@ -492,6 +625,10 @@ class VehicleDocumentsCompanion extends UpdateCompanion<VehicleDocumentData> {
     required String syncStatus,
     required int lastModifiedTimestamp,
     required int createdAt,
+    this.category = const Value.absent(),
+    this.visibleFields = const Value.absent(),
+    this.hiddenContext = const Value.absent(),
+    this.requiresAiScan = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : id = Value(id),
         documentType = Value(documentType),
@@ -515,6 +652,10 @@ class VehicleDocumentsCompanion extends UpdateCompanion<VehicleDocumentData> {
     Expression<String>? syncStatus,
     Expression<int>? lastModifiedTimestamp,
     Expression<int>? createdAt,
+    Expression<String>? category,
+    Expression<String>? visibleFields,
+    Expression<String>? hiddenContext,
+    Expression<bool>? requiresAiScan,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -532,6 +673,10 @@ class VehicleDocumentsCompanion extends UpdateCompanion<VehicleDocumentData> {
       if (lastModifiedTimestamp != null)
         'last_modified_timestamp': lastModifiedTimestamp,
       if (createdAt != null) 'created_at': createdAt,
+      if (category != null) 'category': category,
+      if (visibleFields != null) 'visible_fields': visibleFields,
+      if (hiddenContext != null) 'hidden_context': hiddenContext,
+      if (requiresAiScan != null) 'requires_ai_scan': requiresAiScan,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -549,6 +694,10 @@ class VehicleDocumentsCompanion extends UpdateCompanion<VehicleDocumentData> {
       Value<String>? syncStatus,
       Value<int>? lastModifiedTimestamp,
       Value<int>? createdAt,
+      Value<String>? category,
+      Value<String>? visibleFields,
+      Value<String?>? hiddenContext,
+      Value<bool>? requiresAiScan,
       Value<int>? rowid}) {
     return VehicleDocumentsCompanion(
       id: id ?? this.id,
@@ -564,6 +713,10 @@ class VehicleDocumentsCompanion extends UpdateCompanion<VehicleDocumentData> {
       lastModifiedTimestamp:
           lastModifiedTimestamp ?? this.lastModifiedTimestamp,
       createdAt: createdAt ?? this.createdAt,
+      category: category ?? this.category,
+      visibleFields: visibleFields ?? this.visibleFields,
+      hiddenContext: hiddenContext ?? this.hiddenContext,
+      requiresAiScan: requiresAiScan ?? this.requiresAiScan,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -608,6 +761,18 @@ class VehicleDocumentsCompanion extends UpdateCompanion<VehicleDocumentData> {
     if (createdAt.present) {
       map['created_at'] = Variable<int>(createdAt.value);
     }
+    if (category.present) {
+      map['category'] = Variable<String>(category.value);
+    }
+    if (visibleFields.present) {
+      map['visible_fields'] = Variable<String>(visibleFields.value);
+    }
+    if (hiddenContext.present) {
+      map['hidden_context'] = Variable<String>(hiddenContext.value);
+    }
+    if (requiresAiScan.present) {
+      map['requires_ai_scan'] = Variable<bool>(requiresAiScan.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -629,6 +794,10 @@ class VehicleDocumentsCompanion extends UpdateCompanion<VehicleDocumentData> {
           ..write('syncStatus: $syncStatus, ')
           ..write('lastModifiedTimestamp: $lastModifiedTimestamp, ')
           ..write('createdAt: $createdAt, ')
+          ..write('category: $category, ')
+          ..write('visibleFields: $visibleFields, ')
+          ..write('hiddenContext: $hiddenContext, ')
+          ..write('requiresAiScan: $requiresAiScan, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -1143,6 +1312,10 @@ typedef $$VehicleDocumentsTableCreateCompanionBuilder
   required String syncStatus,
   required int lastModifiedTimestamp,
   required int createdAt,
+  Value<String> category,
+  Value<String> visibleFields,
+  Value<String?> hiddenContext,
+  Value<bool> requiresAiScan,
   Value<int> rowid,
 });
 typedef $$VehicleDocumentsTableUpdateCompanionBuilder
@@ -1159,6 +1332,10 @@ typedef $$VehicleDocumentsTableUpdateCompanionBuilder
   Value<String> syncStatus,
   Value<int> lastModifiedTimestamp,
   Value<int> createdAt,
+  Value<String> category,
+  Value<String> visibleFields,
+  Value<String?> hiddenContext,
+  Value<bool> requiresAiScan,
   Value<int> rowid,
 });
 
@@ -1208,6 +1385,19 @@ class $$VehicleDocumentsTableFilterComposer
 
   ColumnFilters<int> get createdAt => $composableBuilder(
       column: $table.createdAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get category => $composableBuilder(
+      column: $table.category, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get visibleFields => $composableBuilder(
+      column: $table.visibleFields, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get hiddenContext => $composableBuilder(
+      column: $table.hiddenContext, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get requiresAiScan => $composableBuilder(
+      column: $table.requiresAiScan,
+      builder: (column) => ColumnFilters(column));
 }
 
 class $$VehicleDocumentsTableOrderingComposer
@@ -1259,6 +1449,21 @@ class $$VehicleDocumentsTableOrderingComposer
 
   ColumnOrderings<int> get createdAt => $composableBuilder(
       column: $table.createdAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get category => $composableBuilder(
+      column: $table.category, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get visibleFields => $composableBuilder(
+      column: $table.visibleFields,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get hiddenContext => $composableBuilder(
+      column: $table.hiddenContext,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get requiresAiScan => $composableBuilder(
+      column: $table.requiresAiScan,
+      builder: (column) => ColumnOrderings(column));
 }
 
 class $$VehicleDocumentsTableAnnotationComposer
@@ -1305,6 +1510,18 @@ class $$VehicleDocumentsTableAnnotationComposer
 
   GeneratedColumn<int> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<String> get category =>
+      $composableBuilder(column: $table.category, builder: (column) => column);
+
+  GeneratedColumn<String> get visibleFields => $composableBuilder(
+      column: $table.visibleFields, builder: (column) => column);
+
+  GeneratedColumn<String> get hiddenContext => $composableBuilder(
+      column: $table.hiddenContext, builder: (column) => column);
+
+  GeneratedColumn<bool> get requiresAiScan => $composableBuilder(
+      column: $table.requiresAiScan, builder: (column) => column);
 }
 
 class $$VehicleDocumentsTableTableManager extends RootTableManager<
@@ -1346,6 +1563,10 @@ class $$VehicleDocumentsTableTableManager extends RootTableManager<
             Value<String> syncStatus = const Value.absent(),
             Value<int> lastModifiedTimestamp = const Value.absent(),
             Value<int> createdAt = const Value.absent(),
+            Value<String> category = const Value.absent(),
+            Value<String> visibleFields = const Value.absent(),
+            Value<String?> hiddenContext = const Value.absent(),
+            Value<bool> requiresAiScan = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               VehicleDocumentsCompanion(
@@ -1361,6 +1582,10 @@ class $$VehicleDocumentsTableTableManager extends RootTableManager<
             syncStatus: syncStatus,
             lastModifiedTimestamp: lastModifiedTimestamp,
             createdAt: createdAt,
+            category: category,
+            visibleFields: visibleFields,
+            hiddenContext: hiddenContext,
+            requiresAiScan: requiresAiScan,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -1376,6 +1601,10 @@ class $$VehicleDocumentsTableTableManager extends RootTableManager<
             required String syncStatus,
             required int lastModifiedTimestamp,
             required int createdAt,
+            Value<String> category = const Value.absent(),
+            Value<String> visibleFields = const Value.absent(),
+            Value<String?> hiddenContext = const Value.absent(),
+            Value<bool> requiresAiScan = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               VehicleDocumentsCompanion.insert(
@@ -1391,6 +1620,10 @@ class $$VehicleDocumentsTableTableManager extends RootTableManager<
             syncStatus: syncStatus,
             lastModifiedTimestamp: lastModifiedTimestamp,
             createdAt: createdAt,
+            category: category,
+            visibleFields: visibleFields,
+            hiddenContext: hiddenContext,
+            requiresAiScan: requiresAiScan,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
@@ -26,7 +27,7 @@ class VehicleDocumentRepositoryImpl implements IVehicleDocumentRepository {
   })  : _db = db,
         _storageManager = storageManager,
         _syncQueue = syncQueue,
-    _notificationEngine = notificationEngine ?? LocalNotificationEngine.instance {
+        _notificationEngine = notificationEngine ?? LocalNotificationEngine.instance {
     _purgeLegacyProbeRecords();
   }
 
@@ -63,15 +64,43 @@ class VehicleDocumentRepositoryImpl implements IVehicleDocumentRepository {
   @override
   Future<VehicleDocument> saveDocument({
     String? existingId,
-    required DocumentType documentType,
+    DocumentType? documentType,
+    String? category,
     required String title,
-    required String vehicleRegNo,
+    String? vehicleRegNo,
     String? policyNo,
     DateTime? expiryDate,
+    Map<String, dynamic> visibleFields = const {},
+    String? hiddenContext,
+    bool requiresAiScan = false,
     required File sourceFile,
   }) async {
     final documentId = existingId ?? _uuid.v4();
     final now = DateTime.now();
+
+    final effectiveCategory = category?.trim().isNotEmpty == true
+        ? category!.trim()
+        : (documentType?.value ?? 'general');
+    final effectiveDocType = documentType ?? DocumentType.fromString(effectiveCategory);
+    final effectiveRegNo = vehicleRegNo?.trim().isNotEmpty == true
+        ? vehicleRegNo!.trim()
+        : ((visibleFields['vehicleRegNo'] as String?)?.trim().isNotEmpty == true
+            ? (visibleFields['vehicleRegNo'] as String).trim()
+            : 'General');
+    final effectivePolicyNo = policyNo?.trim().isNotEmpty == true
+        ? policyNo!.trim()
+        : ((visibleFields['policyNo'] as String?)?.trim().isNotEmpty == true
+            ? (visibleFields['policyNo'] as String).trim()
+            : null);
+
+    // Merge any extracted legacy keys into visibleFields
+    final mergedFields = Map<String, dynamic>.from(visibleFields);
+    if (effectiveRegNo.isNotEmpty && effectiveRegNo != 'General' && !mergedFields.containsKey('vehicleRegNo')) {
+      mergedFields['vehicleRegNo'] = effectiveRegNo;
+    }
+    if (effectivePolicyNo != null && effectivePolicyNo.isNotEmpty && !mergedFields.containsKey('policyNo')) {
+      mergedFields['policyNo'] = effectivePolicyNo;
+    }
 
     // Ingest into sandboxed vault & compute SHA-256
     final ingestResult = await _storageManager.ingestFile(
@@ -81,16 +110,20 @@ class VehicleDocumentRepositoryImpl implements IVehicleDocumentRepository {
 
     final companion = VehicleDocumentsCompanion(
       id: Value(documentId),
-      documentType: Value(documentType.value),
+      documentType: Value(effectiveDocType.value),
+      category: Value(effectiveCategory),
       title: Value(title),
-      vehicleRegNo: Value(vehicleRegNo),
-      policyNo: Value(policyNo),
+      vehicleRegNo: Value(effectiveRegNo),
+      policyNo: Value(effectivePolicyNo),
       expiryDate: Value(expiryDate?.millisecondsSinceEpoch),
       localFilePath: Value(ingestResult.localFilePath),
       fileChecksumSha256: Value(ingestResult.checksumSha256),
       syncStatus: const Value('queued_upload'),
       lastModifiedTimestamp: Value(now.millisecondsSinceEpoch),
       createdAt: Value(now.millisecondsSinceEpoch),
+      visibleFields: Value(jsonEncode(mergedFields)),
+      hiddenContext: Value(hiddenContext),
+      requiresAiScan: Value(requiresAiScan),
     );
 
     await _db.into(_db.vehicleDocuments).insertOnConflictUpdate(companion);
@@ -101,7 +134,7 @@ class VehicleDocumentRepositoryImpl implements IVehicleDocumentRepository {
         await _notificationEngine.scheduleExpiryAlerts(
           documentId: documentId,
           title: title,
-          vehicleRegNo: vehicleRegNo,
+          vehicleRegNo: effectiveRegNo,
           expiryDate: expiryDate,
         );
       } catch (_) {
@@ -135,9 +168,17 @@ class VehicleDocumentRepositoryImpl implements IVehicleDocumentRepository {
   }
 
   VehicleDocument _mapToDomain(VehicleDocumentData data) {
+    Map<String, dynamic> decodedFields = {};
+    try {
+      if (data.visibleFields.isNotEmpty) {
+        decodedFields = jsonDecode(data.visibleFields) as Map<String, dynamic>;
+      }
+    } catch (_) {}
+
     return VehicleDocument(
       id: data.id,
       documentType: DocumentType.fromString(data.documentType),
+      category: data.category.isNotEmpty ? data.category : data.documentType,
       title: data.title,
       vehicleRegNo: data.vehicleRegNo,
       policyNo: data.policyNo,
@@ -148,6 +189,9 @@ class VehicleDocumentRepositoryImpl implements IVehicleDocumentRepository {
       syncStatus: SyncStatus.fromString(data.syncStatus),
       lastModifiedTimestamp: DateTime.fromMillisecondsSinceEpoch(data.lastModifiedTimestamp),
       createdAt: DateTime.fromMillisecondsSinceEpoch(data.createdAt),
+      visibleFields: decodedFields,
+      hiddenContext: data.hiddenContext,
+      requiresAiScan: data.requiresAiScan,
     );
   }
 }
