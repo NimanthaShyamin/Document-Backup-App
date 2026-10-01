@@ -882,7 +882,7 @@ class SettingsScreen extends ConsumerWidget {
               controller: controller,
               style: const TextStyle(color: Colors.white, fontSize: 13, fontFamily: 'monospace'),
               decoration: InputDecoration(
-                labelText: 'API Key (AIzaSy...)',
+                labelText: 'Google AI Studio API Key',
                 labelStyle: const TextStyle(color: Colors.white60),
                 filled: true,
                 fillColor: const Color(0xFF26262E),

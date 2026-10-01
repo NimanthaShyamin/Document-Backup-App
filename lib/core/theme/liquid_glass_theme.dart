@@ -428,11 +428,13 @@ class LiquidGlassCard extends StatelessWidget {
       content = Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(radius),
+          border: border,
           boxShadow: LiquidGlassTheme.glassShadows(isDark),
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(radius),
           child: Stack(
+            alignment: Alignment.center,
             children: [
               // Layer 1: .glass-filter (BackdropFilter blur)
               Positioned.fill(
@@ -505,13 +507,8 @@ class LiquidGlassCard extends StatelessWidget {
 }
 
 /// Dynamic ambient gradient background implementing:
-/// 1. Light Mode (Liquid Glass OFF - Screenshot 1):
-///    Milk white background blended with mixed light colorful blue according to window structure.
-/// 2. Dark Mode (Liquid Glass OFF - Screenshot 2):
-///    Deep electric midnight navy background with glowing royal blue atmospheric aura.
-/// 3. Liquid Glass (ON - Screenshot 3):
-///    Apple 3D Liquid Glass aesthetic with authentic atmospheric depth under the glass,
-///    allowing BackdropFilter to render realistic optical refraction with zero interference for text and buttons.
+/// Uniform soothing light-blue pastel canvas for light mode,
+/// and electric midnight navy canvas for dark mode (preserving original background in liquid glass).
 class LiquidGlassBackground extends StatelessWidget {
   final Widget child;
   final bool isLiquidGlass;
@@ -526,76 +523,11 @@ class LiquidGlassBackground extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    if (!isLiquidGlass) {
-      if (!isDark) {
-        // Screenshot 1 Style: Eye-friendly soothing pastel sky-blue canvas blended with milk white
-        return Stack(
-          children: [
-            // Structural top-to-bottom soothing sky-blue atmospheric gradient
-            const Positioned.fill(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    stops: [0.0, 0.35, 0.70, 1.0],
-                    colors: [
-                      Color(0xFFB8D8F8), // Rich soothing sky blue at top (like Screenshot 1)
-                      Color(0xFFCDE5FB), // Gentle calming celestial blue
-                      Color(0xFFDFEEFD), // Soft eye-friendly powder blue
-                      Color(0xFFEBF4FD), // Comfortable pastel ice-milk tone at base (NEVER blinding white!)
-                    ],
-                  ),
-                ),
-              ),
-            ),
-
-            // Soft atmospheric colorful light blue glow near upper right / header
-            Positioned(
-              top: -60,
-              right: -50,
-              width: 300,
-              height: 300,
-              child: Container(
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: const Color(0xFF90C8FC).withValues(alpha: 0.60),
-                ),
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 70, sigmaY: 70),
-                  child: const SizedBox.expand(),
-                ),
-              ),
-            ),
-
-            // Soft cyan-blue ambient glow at upper left
-            Positioned(
-              top: 100,
-              left: -80,
-              width: 260,
-              height: 260,
-              child: Container(
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: const Color(0xFFA8D8FD).withValues(alpha: 0.45),
-                ),
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 75, sigmaY: 75),
-                  child: const SizedBox.expand(),
-                ),
-              ),
-            ),
-
-            // Content
-            child,
-          ],
-        );
-      }
-
-      // Screenshot 2 Style: Electric midnight navy background with glowing royal blue aura
+    if (!isDark) {
+      // Light Mode: Eye-friendly soothing pastel sky-blue canvas blended with milk white
       return Stack(
         children: [
-          // Base Electric Midnight Navy Gradient
+          // Structural top-to-bottom soothing sky-blue atmospheric gradient
           const Positioned.fill(
             child: DecoratedBox(
               decoration: BoxDecoration(
@@ -604,48 +536,44 @@ class LiquidGlassBackground extends StatelessWidget {
                   end: Alignment.bottomCenter,
                   stops: [0.0, 0.35, 0.70, 1.0],
                   colors: [
-                    Color(0xFF03061A), // Deepest midnight navy
-                    Color(0xFF060D33), // Electric indigo tone
-                    Color(0xFF0A1448), // Royal midnight blue
-                    Color(0xFF04071E), // Cosmic finish
+                    Color(0xFFB8D8F8), // Rich soothing sky blue at top (like Screenshot 1)
+                    Color(0xFFCDE5FB), // Gentle calming celestial blue
+                    Color(0xFFDFEEFD), // Soft eye-friendly powder blue
+                    Color(0xFFEBF4FD), // Comfortable pastel ice-milk tone at base
                   ],
                 ),
               ),
             ),
           ),
 
-          // Central Glowing Royal Blue Ambient Aura (Matching circular battery/orb meter in Screenshot 2)
+          // Soft atmospheric colorful light blue glow near upper right / header
           Positioned(
-            top: 100,
-            left: 0,
-            right: 0,
-            height: 280,
-            child: Center(
-              child: Container(
-                width: 260,
-                height: 260,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: const Color(0xFF1D3DF0).withValues(alpha: 0.32),
-                ),
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 85, sigmaY: 85),
-                  child: const SizedBox.expand(),
-                ),
+            top: -60,
+            right: -50,
+            width: 300,
+            height: 300,
+            child: Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(0xFF90C8FC).withValues(alpha: 0.60),
+              ),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 70, sigmaY: 70),
+                child: const SizedBox.expand(),
               ),
             ),
           ),
 
-          // Lower electric blue ambient glow
+          // Soft cyan-blue ambient glow at upper left
           Positioned(
-            bottom: -40,
-            right: -30,
+            top: 100,
+            left: -80,
             width: 260,
             height: 260,
             child: Container(
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: const Color(0xFF18296B).withValues(alpha: 0.28),
+                color: const Color(0xFFA8D8FD).withValues(alpha: 0.45),
               ),
               child: BackdropFilter(
                 filter: ImageFilter.blur(sigmaX: 75, sigmaY: 75),
@@ -660,44 +588,60 @@ class LiquidGlassBackground extends StatelessWidget {
       );
     }
 
-    // Screenshot 3 Style: Apple 3D Liquid Glass with dynamic atmospheric lighting under the glass
+    // Dark Mode: Electric midnight navy background with glowing royal blue aura
     return Stack(
       children: [
-        // Base Ambient Gradient Layer
-        Positioned.fill(
+        // Base Electric Midnight Navy Gradient
+        const Positioned.fill(
           child: DecoratedBox(
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: isDark
-                    ? const [
-                        Color(0xFF090B14),
-                        Color(0xFF111422),
-                        Color(0xFF0B0D18),
-                      ]
-                    : const [
-                        Color(0xFFDCEAF8),
-                        Color(0xFFEDE9F8),
-                        Color(0xFFDFEFFD),
-                      ],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                stops: [0.0, 0.35, 0.70, 1.0],
+                colors: [
+                  Color(0xFF03061A), // Deepest midnight navy
+                  Color(0xFF060D33), // Electric indigo tone
+                  Color(0xFF0A1448), // Royal midnight blue
+                  Color(0xFF04071E), // Cosmic finish
+                ],
               ),
             ),
           ),
         ),
 
-        // Glowing Ambient Orb 1 (Top Right - Radiant Coral/Red glow matching --lg-red: #fb4268)
+        // Central Glowing Royal Blue Ambient Aura
         Positioned(
-          top: -40,
-          right: -40,
-          width: 320,
-          height: 320,
+          top: 100,
+          left: 0,
+          right: 0,
+          height: 280,
+          child: Center(
+            child: Container(
+              width: 260,
+              height: 260,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(0xFF1D3DF0).withValues(alpha: 0.32),
+              ),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 85, sigmaY: 85),
+                child: const SizedBox.expand(),
+              ),
+            ),
+          ),
+        ),
+
+        // Lower electric blue ambient glow
+        Positioned(
+          bottom: -40,
+          right: -30,
+          width: 260,
+          height: 260,
           child: Container(
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: isDark
-                  ? LiquidGlassTheme.lgRed.withValues(alpha: 0.45) // Vivid coral-red glow (#fb4268)
-                  : const Color(0xFF60A5FA).withValues(alpha: 0.55),
+              color: const Color(0xFF18296B).withValues(alpha: 0.28),
             ),
             child: BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 75, sigmaY: 75),
@@ -706,47 +650,7 @@ class LiquidGlassBackground extends StatelessWidget {
           ),
         ),
 
-        // Glowing Ambient Orb 2 (Center Left - Radiant Cyan/Turquoise glow like ss1 reference)
-        Positioned(
-          top: 240,
-          left: -80,
-          width: 300,
-          height: 300,
-          child: Container(
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: isDark
-                  ? const Color(0xFF06B6D4).withValues(alpha: 0.45) // Vivid turquoise/cyan glow
-                  : const Color(0xFFA78BFA).withValues(alpha: 0.50),
-            ),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 80, sigmaY: 80),
-              child: const SizedBox.expand(),
-            ),
-          ),
-        ),
-
-        // Glowing Ambient Orb 3 (Bottom Right - Radiant Indigo glow)
-        Positioned(
-          bottom: -30,
-          right: 20,
-          width: 300,
-          height: 300,
-          child: Container(
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: isDark
-                  ? const Color(0xFF6366F1).withValues(alpha: 0.40) // Vivid indigo glow
-                  : const Color(0xFF38BDF8).withValues(alpha: 0.45),
-            ),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 85, sigmaY: 85),
-              child: const SizedBox.expand(),
-            ),
-          ),
-        ),
-
-        // Foreground Content
+        // Content
         child,
       ],
     );

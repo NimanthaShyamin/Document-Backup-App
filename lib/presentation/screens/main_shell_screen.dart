@@ -149,6 +149,7 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
 
     Widget dockContent = Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: List.generate(tabs.length, (index) {
         final tab = tabs[index];
         final isSelected = _currentIndex == index;
@@ -159,17 +160,21 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
         BoxBorder? activePillBorder;
 
         if (isLiquidGlass) {
-          // Exact liquid glass styling:
-          // .glass-item--active: background: rgba(0, 0, 0, 0.25); color: var(--lg-red) (#fb4268);
-          // .glass-item: color: var(--lg-grey) (#444739);
-          activePillColor = LiquidGlassTheme.lgActivePillBg; // rgba(0, 0, 0, 0.25)
+          // Liquid Glass style: harmonious translucent glass pill matching theme palette
+          activePillColor = isDark
+              ? const Color(0x3538BDF8)
+              : const Color(0x252563EB);
           activePillBorder = Border.all(
-            color: LiquidGlassTheme.lgRed.withValues(alpha: 0.35),
+            color: isDark
+                ? const Color(0x6038BDF8)
+                : const Color(0x502563EB),
             width: 1.0,
           );
-          activeContentColor = LiquidGlassTheme.lgRed; // #fb4268
+          activeContentColor = isDark
+              ? LiquidGlassTheme.accentElectricBlue
+              : const Color(0xFF2563EB);
           inactiveContentColor =
-              isDark ? Colors.white70 : LiquidGlassTheme.lgGrey; // #444739
+              isDark ? Colors.white60 : const Color(0xFF475569);
         } else if (!isDark) {
           activePillColor = const Color(0xFFEFF6FF);
           activeContentColor = const Color(0xFF2563EB);
@@ -197,6 +202,7 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 Icon(
                   tab.icon,
@@ -235,8 +241,8 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
         child: LiquidGlassCard(
           isLiquidGlass: true,
           radius: 30,
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-          child: dockContent,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: Center(child: dockContent),
         ),
       );
     } else {

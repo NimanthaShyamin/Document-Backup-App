@@ -706,8 +706,7 @@ class _ImportDocumentMetadataSheetState
         (_geminiStatusMessage!.toLowerCase().contains('api key not valid') ||
             _geminiStatusMessage!.toLowerCase().contains('api_key_invalid') ||
             _geminiStatusMessage!.toLowerCase().contains('invalid api key') ||
-            _geminiStatusMessage!.toLowerCase().contains('api key is not configured') ||
-            _geminiStatusMessage!.contains('AIzaSy'));
+            _geminiStatusMessage!.toLowerCase().contains('api key is not configured'));
 
     final boxColor = isKeyError
         ? Colors.redAccent.withValues(alpha: 0.14)

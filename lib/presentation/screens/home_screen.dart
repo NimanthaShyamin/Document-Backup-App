@@ -223,25 +223,55 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         backgroundColor: Colors.transparent,
         floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
         floatingActionButton: Padding(
-          padding: const EdgeInsets.only(bottom: 76, right: 6),
-          child: FloatingActionButton.extended(
-            heroTag: 'home_fab_import_doc',
-            elevation: 6,
-            backgroundColor:
-                isDark ? LiquidGlassTheme.accentElectricBlue : const Color(0xFF2563EB),
-            foregroundColor: Colors.white,
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16)),
-            onPressed: () => _handleManualImport(context),
-            icon: const Icon(Icons.add_rounded, size: 22),
-            label: const Text(
-              'Import Document',
-              style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 13,
-                  letterSpacing: 0.2),
-            ),
-          ),
+          padding: const EdgeInsets.only(bottom: 86, right: 6),
+          child: isLiquidGlass
+              ? LiquidGlassCard(
+                  isLiquidGlass: true,
+                  radius: 22,
+                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                  color: isDark
+                      ? LiquidGlassTheme.accentElectricBlue.withValues(alpha: 0.35)
+                      : const Color(0xFF2563EB).withValues(alpha: 0.85),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.65),
+                    width: 1.2,
+                  ),
+                  onTap: () => _handleManualImport(context),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.add_rounded, size: 20, color: Colors.white),
+                      SizedBox(width: 8),
+                      Text(
+                        'Import Document',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                          letterSpacing: 0.2,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              : FloatingActionButton.extended(
+                  heroTag: 'home_fab_import_doc',
+                  elevation: 6,
+                  backgroundColor:
+                      isDark ? LiquidGlassTheme.accentElectricBlue : const Color(0xFF2563EB),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16)),
+                  onPressed: () => _handleManualImport(context),
+                  icon: const Icon(Icons.add_rounded, size: 22),
+                  label: const Text(
+                    'Import Document',
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                        letterSpacing: 0.2),
+                  ),
+                ),
         ),
         appBar: _buildAppBar(searchVisible, isLiquidGlass, language, isDark),
         body: docsAsync.when(
@@ -832,118 +862,148 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     required bool isDark,
     required bool isLiquidGlass,
   }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: GestureDetector(
-        onTap: () => Navigator.of(context).push(
-          PageRouteBuilder(
-            pageBuilder: (_, anim, __) =>
-                FolderContentsScreen(folder: folder),
-            transitionsBuilder: (_, anim, __, child) => SlideTransition(
-              position: Tween<Offset>(
-                begin: const Offset(1, 0),
-                end: Offset.zero,
-              ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutCubic)),
-              child: child,
-            ),
-            transitionDuration: const Duration(milliseconds: 320),
-          ),
-        ),
-        child: Container(
-          padding: const EdgeInsets.all(16),
+    final folderBody = Row(
+      children: [
+        // Folder icon container
+        Container(
+          width: 52,
+          height: 52,
           decoration: BoxDecoration(
-            color: isDark
-                ? folder.accentColor.withValues(alpha: 0.10)
-                : folder.accentColor.withValues(alpha: 0.05),
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(
-              color: folder.accentColor.withValues(alpha: isDark ? 0.35 : 0.25),
-              width: 1.2,
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                folder.accentColor.withValues(alpha: isDark ? 0.5 : 0.35),
+                folder.accentColor.withValues(alpha: isDark ? 0.28 : 0.15),
+              ],
             ),
-            boxShadow: [
-              BoxShadow(
-                color: folder.accentColor.withValues(alpha: 0.06),
-                blurRadius: 10,
-                offset: const Offset(0, 3),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: folder.accentColor.withValues(alpha: 0.35),
+              width: 1,
+            ),
+          ),
+          child: Icon(folder.icon, color: folder.accentColor, size: 24),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                folder.title,
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                  color: isDark ? Colors.white : const Color(0xFF0F172A),
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                folder.subtitle,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: isDark ? Colors.white54 : const Color(0xFF64748B),
+                ),
               ),
             ],
           ),
-          child: Row(
-            children: [
-              // Folder icon container
-              Container(
-                width: 52,
-                height: 52,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      folder.accentColor.withValues(alpha: isDark ? 0.5 : 0.35),
-                      folder.accentColor.withValues(alpha: isDark ? 0.28 : 0.15),
-                    ],
-                  ),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                    color: folder.accentColor.withValues(alpha: 0.35),
-                    width: 1,
-                  ),
-                ),
-                child: Icon(folder.icon, color: folder.accentColor, size: 24),
+        ),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: folder.accentColor.withValues(alpha: 0.18),
+                borderRadius: BorderRadius.circular(10),
               ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      folder.title,
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
-                        color: isDark ? Colors.white : const Color(0xFF0F172A),
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      folder.subtitle,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: isDark ? Colors.white54 : const Color(0xFF64748B),
-                      ),
+              child: Text(
+                '${folder.documents.length}',
+                style: TextStyle(
+                  color: folder.accentColor,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Icon(Icons.chevron_right_rounded,
+                color: isDark ? Colors.white30 : const Color(0xFF94A3B8),
+                size: 18),
+          ],
+        ),
+      ],
+    );
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: isLiquidGlass
+          ? LiquidGlassCard(
+              isLiquidGlass: true,
+              radius: 18,
+              padding: const EdgeInsets.all(16),
+              color: isDark
+                  ? folder.accentColor.withValues(alpha: 0.12)
+                  : folder.accentColor.withValues(alpha: 0.08),
+              border: Border.all(
+                color: folder.accentColor.withValues(alpha: isDark ? 0.40 : 0.30),
+                width: 1.2,
+              ),
+              onTap: () => Navigator.of(context).push(
+                PageRouteBuilder(
+                  pageBuilder: (_, anim, __) =>
+                      FolderContentsScreen(folder: folder),
+                  transitionsBuilder: (_, anim, __, child) => SlideTransition(
+                    position: Tween<Offset>(
+                      begin: const Offset(1, 0),
+                      end: Offset.zero,
+                    ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutCubic)),
+                    child: child,
+                  ),
+                  transitionDuration: const Duration(milliseconds: 320),
+                ),
+              ),
+              child: folderBody,
+            )
+          : GestureDetector(
+              onTap: () => Navigator.of(context).push(
+                PageRouteBuilder(
+                  pageBuilder: (_, anim, __) =>
+                      FolderContentsScreen(folder: folder),
+                  transitionsBuilder: (_, anim, __, child) => SlideTransition(
+                    position: Tween<Offset>(
+                      begin: const Offset(1, 0),
+                      end: Offset.zero,
+                    ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutCubic)),
+                    child: child,
+                  ),
+                  transitionDuration: const Duration(milliseconds: 320),
+                ),
+              ),
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: isDark
+                      ? folder.accentColor.withValues(alpha: 0.10)
+                      : folder.accentColor.withValues(alpha: 0.05),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: folder.accentColor.withValues(alpha: isDark ? 0.35 : 0.25),
+                    width: 1.2,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: folder.accentColor.withValues(alpha: 0.06),
+                      blurRadius: 10,
+                      offset: const Offset(0, 3),
                     ),
                   ],
                 ),
+                child: folderBody,
               ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: folder.accentColor.withValues(alpha: 0.18),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(
-                      '${folder.documents.length}',
-                      style: TextStyle(
-                        color: folder.accentColor,
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Icon(Icons.chevron_right_rounded,
-                      color: isDark ? Colors.white30 : const Color(0xFF94A3B8),
-                      size: 18),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
+            ),
     );
   }
 
@@ -965,56 +1025,71 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       bool isLiquidGlass, bool isDark) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
-      child: GestureDetector(
-        onTap: () {
-          Navigator.of(context).push(
-            MaterialPageRoute(
-                builder: (_) => DocumentViewerScreen(document: doc)),
-          );
-        },
-        onLongPress: () => _showDocumentActionSheet(context, doc),
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.04),
-                blurRadius: 6,
-                offset: const Offset(0, 2),
-              )
-            ],
-          ),
-          child: _buildCardContent(doc, doc.isExpired, isDark),
-        ),
-      ),
+      child: isLiquidGlass
+          ? LiquidGlassCard(
+              isLiquidGlass: true,
+              radius: 16,
+              padding: EdgeInsets.zero,
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                      builder: (_) => DocumentViewerScreen(document: doc)),
+                );
+              },
+              child: _buildCardContent(doc, doc.isExpired, isDark, true),
+            )
+          : GestureDetector(
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                      builder: (_) => DocumentViewerScreen(document: doc)),
+                );
+              },
+              onLongPress: () => _showDocumentActionSheet(context, doc),
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.04),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2),
+                    )
+                  ],
+                ),
+                child: _buildCardContent(doc, doc.isExpired, isDark, false),
+              ),
+            ),
     );
   }
 
   Widget _buildCardContent(
-      VehicleDocument doc, bool isExpired, bool isDark) {
+      VehicleDocument doc, bool isExpired, bool isDark, [bool isLiquidGlass = false]) {
     final hasRef = doc.vehicleRegNo.isNotEmpty &&
         doc.vehicleRegNo != 'General' &&
         doc.vehicleRegNo.toLowerCase() != 'other';
     return Container(
-      decoration: BoxDecoration(
-        color: isDark
-            ? const Color(0xFF0F172A).withValues(alpha: 0.75)
-            : Colors.white.withValues(alpha: 0.94),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: isDark
-              ? Colors.white.withValues(alpha: 0.14)
-              : const Color(0xFFCBD5E1),
-          width: 1,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: isDark ? 0.25 : 0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
+      decoration: isLiquidGlass
+          ? null
+          : BoxDecoration(
+              color: isDark
+                  ? const Color(0xFF0F172A).withValues(alpha: 0.75)
+                  : Colors.white.withValues(alpha: 0.94),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: isDark
+                    ? Colors.white.withValues(alpha: 0.14)
+                    : const Color(0xFFCBD5E1),
+                width: 1,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: isDark ? 0.25 : 0.05),
+                  blurRadius: 8,
+                  offset: const Offset(0, 3),
+                ),
+              ],
+            ),
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Row(
@@ -1240,62 +1315,79 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             ? Colors.white.withValues(alpha: 0.05)
             : Colors.white.withValues(alpha: 0.88));
 
-    return Expanded(
-      child: GestureDetector(
-        onTap: () => setState(() {
-          _statusFilter = (_statusFilter == filterKey) ? null : filterKey;
-        }),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
-          decoration: BoxDecoration(
-            color: bgColor,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-                color: borderColor, width: isSelected ? 2 : 1),
-            boxShadow: isSelected
-                ? [
-                    BoxShadow(
-                      color: color.withValues(alpha: 0.35),
-                      blurRadius: 8,
-                      offset: const Offset(0, 2),
-                    )
-                  ]
-                : null,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, color: color, size: 18),
-              const SizedBox(height: 4),
-              Text(
-                count,
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: isDark ? Colors.white : const Color(0xFF0F172A),
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight:
-                      isSelected ? FontWeight.bold : FontWeight.w600,
-                  color: isSelected
-                      ? color
-                      : (isDark
-                          ? Colors.white70
-                          : const Color(0xFF475569)),
-                ),
-              ),
-            ],
+    final cardContent = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, color: color, size: 18),
+        const SizedBox(height: 4),
+        Text(
+          count,
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: isDark ? Colors.white : const Color(0xFF0F172A),
           ),
         ),
-      ),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
+            color: isSelected
+                ? color
+                : (isDark ? Colors.white70 : const Color(0xFF475569)),
+          ),
+        ),
+      ],
+    );
+
+    return Expanded(
+      child: isLiquidGlass
+          ? LiquidGlassCard(
+              isLiquidGlass: true,
+              radius: 16,
+              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+              color: isSelected
+                  ? color.withValues(alpha: isDark ? 0.30 : 0.20)
+                  : (isDark
+                      ? LiquidGlassTheme.lgBgColorDark
+                      : LiquidGlassTheme.lgBgColor),
+              border: isSelected
+                  ? Border.all(color: color, width: 2.0)
+                  : null,
+              onTap: () => setState(() {
+                _statusFilter = (_statusFilter == filterKey) ? null : filterKey;
+              }),
+              child: cardContent,
+            )
+          : GestureDetector(
+              onTap: () => setState(() {
+                _statusFilter = (_statusFilter == filterKey) ? null : filterKey;
+              }),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+                decoration: BoxDecoration(
+                  color: bgColor,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                      color: borderColor, width: isSelected ? 2 : 1),
+                  boxShadow: isSelected
+                      ? [
+                          BoxShadow(
+                            color: color.withValues(alpha: 0.35),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          )
+                        ]
+                      : null,
+                ),
+                child: cardContent,
+              ),
+            ),
     );
   }
 

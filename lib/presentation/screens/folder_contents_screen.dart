@@ -47,6 +47,7 @@ class FolderContentsScreen extends ConsumerStatefulWidget {
 
 class _FolderContentsScreenState extends ConsumerState<FolderContentsScreen> {
   double _dragOffsetY = 0.0;
+  bool _isDragging = false;
 
   void _showDocumentActionSheet(BuildContext context, VehicleDocument doc) {
     showModalBottomSheet(
@@ -200,41 +201,84 @@ class _FolderContentsScreenState extends ConsumerState<FolderContentsScreen> {
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
       onVerticalDragUpdate: (details) {
-        if (details.primaryDelta != null && details.primaryDelta! > 0) {
+        final delta = details.primaryDelta ?? 0;
+        if (delta > 0 || _dragOffsetY > 0) {
           setState(() {
-            _dragOffsetY = (_dragOffsetY + details.primaryDelta!).clamp(0.0, 400.0);
+            _isDragging = true;
+            _dragOffsetY = (_dragOffsetY + delta).clamp(0.0, 400.0);
           });
         }
       },
       onVerticalDragEnd: (details) {
-        if (_dragOffsetY > 90 || (details.primaryVelocity != null && details.primaryVelocity! > 500)) {
+        final velocity = details.primaryVelocity ?? 0;
+        if (_dragOffsetY > 80 || velocity > 400) {
           Navigator.of(context).pop();
         } else {
-          setState(() => _dragOffsetY = 0.0);
+          setState(() {
+            _isDragging = false;
+            _dragOffsetY = 0.0;
+          });
         }
       },
-      onVerticalDragCancel: () => setState(() => _dragOffsetY = 0.0),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 100),
-        transform: Matrix4.translationValues(0.0, _dragOffsetY, 0.0),
-        child: Opacity(
-          opacity: (1.0 - (_dragOffsetY / 300.0)).clamp(0.0, 1.0),
-          child: Scaffold(
-            backgroundColor: Colors.transparent,
-            body: LiquidGlassBackground(
-              isLiquidGlass: isLiquidGlass,
-              child: SafeArea(
-                child: Column(
-                  children: [
-                    _buildAppBar(isDark, totalCount, liveSubFolders != null && liveSubFolders.isNotEmpty),
-                    Expanded(
-                      child: liveSubFolders != null && liveSubFolders.isNotEmpty
-                          ? _buildSubFolders(liveSubFolders, isLiquidGlass, isDark)
-                          : (liveSubCategories != null
-                              ? _buildSubCategorizedWithDocs(liveSubCategories, isLiquidGlass, isDark)
-                              : _buildFlat(liveFolderDocs, isLiquidGlass, isDark)),
-                    ),
-                  ],
+      onVerticalDragCancel: () {
+        setState(() {
+          _isDragging = false;
+          _dragOffsetY = 0.0;
+        });
+      },
+      child: NotificationListener<ScrollNotification>(
+        onNotification: (notification) {
+          if (notification is OverscrollNotification) {
+            if (notification.overscroll < 0) {
+              setState(() {
+                _isDragging = true;
+                _dragOffsetY = (_dragOffsetY - notification.overscroll).clamp(0.0, 400.0);
+              });
+            }
+          } else if (notification is ScrollUpdateNotification) {
+            if (_dragOffsetY > 0 && notification.scrollDelta != null) {
+              setState(() {
+                _isDragging = true;
+                _dragOffsetY = (_dragOffsetY - notification.scrollDelta!).clamp(0.0, 400.0);
+              });
+            }
+          } else if (notification is ScrollEndNotification) {
+            if (_dragOffsetY > 0) {
+              if (_dragOffsetY > 80) {
+                Navigator.of(context).pop();
+              } else {
+                setState(() {
+                  _isDragging = false;
+                  _dragOffsetY = 0.0;
+                });
+              }
+            }
+          }
+          return false;
+        },
+        child: AnimatedContainer(
+          duration: _isDragging ? Duration.zero : const Duration(milliseconds: 240),
+          curve: Curves.easeOutCubic,
+          transform: Matrix4.translationValues(0.0, _dragOffsetY, 0.0),
+          child: Opacity(
+            opacity: (1.0 - (_dragOffsetY / 300.0)).clamp(0.0, 1.0),
+            child: Scaffold(
+              backgroundColor: Colors.transparent,
+              body: LiquidGlassBackground(
+                isLiquidGlass: isLiquidGlass,
+                child: SafeArea(
+                  child: Column(
+                    children: [
+                      _buildAppBar(isDark, totalCount, liveSubFolders != null && liveSubFolders.isNotEmpty),
+                      Expanded(
+                        child: liveSubFolders != null && liveSubFolders.isNotEmpty
+                            ? _buildSubFolders(liveSubFolders, isLiquidGlass, isDark)
+                            : (liveSubCategories != null
+                                ? _buildSubCategorizedWithDocs(liveSubCategories, isLiquidGlass, isDark)
+                                : _buildFlat(liveFolderDocs, isLiquidGlass, isDark)),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -298,18 +342,19 @@ class _FolderContentsScreenState extends ConsumerState<FolderContentsScreen> {
 
   Widget _buildSubFolders(
       List<SmartFolder> subFolders, bool isLiquidGlass, bool isDark) {
-    return ListView.builder(
+    return SingleChildScrollView(
+      physics: const AlwaysScrollableScrollPhysics(parent: ClampingScrollPhysics()),
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 80),
-      itemCount: subFolders.length,
-      itemBuilder: (context, i) {
-        final sub = subFolders[i];
-        return _buildFolderTile(
-          context: context,
-          folder: sub,
-          isDark: isDark,
-          isLiquidGlass: isLiquidGlass,
-        );
-      },
+      child: Column(
+        children: subFolders
+            .map((sub) => _buildFolderTile(
+                  context: context,
+                  folder: sub,
+                  isDark: isDark,
+                  isLiquidGlass: isLiquidGlass,
+                ))
+            .toList(),
+      ),
     );
   }
 
@@ -319,108 +364,130 @@ class _FolderContentsScreenState extends ConsumerState<FolderContentsScreen> {
     required bool isDark,
     required bool isLiquidGlass,
   }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: GestureDetector(
-        onTap: () => Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => FolderContentsScreen(folder: folder),
-          ),
-        ),
-        child: Container(
-          padding: const EdgeInsets.all(16),
+    final body = Row(
+      children: [
+        Container(
+          width: 52,
+          height: 52,
           decoration: BoxDecoration(
-            color: isDark
-                ? folder.accentColor.withValues(alpha: 0.10)
-                : folder.accentColor.withValues(alpha: 0.05),
-            borderRadius: BorderRadius.circular(18),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                folder.accentColor.withValues(alpha: isDark ? 0.5 : 0.35),
+                folder.accentColor.withValues(alpha: isDark ? 0.28 : 0.15),
+              ],
+            ),
+            borderRadius: BorderRadius.circular(14),
             border: Border.all(
-              color: folder.accentColor.withValues(alpha: isDark ? 0.35 : 0.25),
+              color: folder.accentColor.withValues(alpha: 0.4),
               width: 1.2,
             ),
-            boxShadow: [
-              BoxShadow(
-                color: folder.accentColor.withValues(alpha: 0.06),
-                blurRadius: 10,
-                offset: const Offset(0, 3),
+          ),
+          child: Icon(folder.icon, color: Colors.white, size: 26),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                folder.title,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: isDark ? Colors.white : const Color(0xFF0F172A),
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                folder.subtitle,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: isDark ? Colors.white60 : const Color(0xFF64748B),
+                ),
               ),
             ],
           ),
-          child: Row(
-            children: [
-              Container(
-                width: 52,
-                height: 52,
+        ),
+        Container(
+          padding:
+              const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            color: folder.accentColor.withValues(alpha: 0.18),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(
+            '${folder.documents.length}',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
+              color: folder.accentColor,
+            ),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Icon(Icons.arrow_forward_ios_rounded,
+            size: 13, color: isDark ? Colors.white30 : Colors.black26),
+      ],
+    );
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: isLiquidGlass
+          ? LiquidGlassCard(
+              isLiquidGlass: true,
+              radius: 18,
+              padding: const EdgeInsets.all(16),
+              color: isDark
+                  ? folder.accentColor.withValues(alpha: 0.12)
+                  : folder.accentColor.withValues(alpha: 0.08),
+              border: Border.all(
+                color: folder.accentColor.withValues(alpha: isDark ? 0.40 : 0.30),
+                width: 1.2,
+              ),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => FolderContentsScreen(folder: folder),
+                ),
+              ),
+              child: body,
+            )
+          : GestureDetector(
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => FolderContentsScreen(folder: folder),
+                ),
+              ),
+              child: Container(
+                padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      folder.accentColor.withValues(alpha: isDark ? 0.5 : 0.35),
-                      folder.accentColor.withValues(alpha: isDark ? 0.28 : 0.15),
-                    ],
-                  ),
-                  borderRadius: BorderRadius.circular(14),
+                  color: isDark
+                      ? folder.accentColor.withValues(alpha: 0.10)
+                      : folder.accentColor.withValues(alpha: 0.05),
+                  borderRadius: BorderRadius.circular(18),
                   border: Border.all(
-                    color: folder.accentColor.withValues(alpha: 0.4),
+                    color: folder.accentColor.withValues(alpha: isDark ? 0.35 : 0.25),
                     width: 1.2,
                   ),
-                ),
-                child: Icon(folder.icon, color: Colors.white, size: 26),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      folder.title,
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: isDark ? Colors.white : const Color(0xFF0F172A),
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      folder.subtitle,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: isDark ? Colors.white60 : const Color(0xFF64748B),
-                      ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: folder.accentColor.withValues(alpha: 0.06),
+                      blurRadius: 10,
+                      offset: const Offset(0, 3),
                     ),
                   ],
                 ),
+                child: body,
               ),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: folder.accentColor.withValues(alpha: 0.18),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  '${folder.documents.length}',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                    color: folder.accentColor,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 6),
-              Icon(Icons.arrow_forward_ios_rounded,
-                  size: 13, color: isDark ? Colors.white30 : Colors.black26),
-            ],
-          ),
-        ),
-      ),
+            ),
     );
   }
 
   Widget _buildSubCategorizedWithDocs(
       Map<String, List<VehicleDocument>> subCats, bool isLiquidGlass, bool isDark) {
     return SingleChildScrollView(
+      physics: const AlwaysScrollableScrollPhysics(parent: ClampingScrollPhysics()),
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 110),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -475,6 +542,7 @@ class _FolderContentsScreenState extends ConsumerState<FolderContentsScreen> {
   Widget _buildFlat(
       List<VehicleDocument> docs, bool isLiquidGlass, bool isDark) {
     return SingleChildScrollView(
+      physics: const AlwaysScrollableScrollPhysics(parent: ClampingScrollPhysics()),
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 110),
       child: Column(
         children: docs
@@ -491,52 +559,66 @@ class _FolderContentsScreenState extends ConsumerState<FolderContentsScreen> {
       VehicleDocument doc, bool isLiquidGlass, bool isDark) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
-      child: GestureDetector(
-        onTap: () {
-          Navigator.of(context).push(MaterialPageRoute(
-            builder: (_) => DocumentViewerScreen(document: doc),
-          ));
-        },
-        onLongPress: () => _showDocumentActionSheet(context, doc),
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.04),
-                blurRadius: 6,
-                offset: const Offset(0, 2),
-              )
-            ],
-          ),
-          child: _cardContent(doc, isDark),
-        ),
-      ),
+      child: isLiquidGlass
+          ? LiquidGlassCard(
+              isLiquidGlass: true,
+              radius: 16,
+              padding: EdgeInsets.zero,
+              onTap: () {
+                Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => DocumentViewerScreen(document: doc),
+                ));
+              },
+              child: _cardContent(doc, isDark, true),
+            )
+          : GestureDetector(
+              onTap: () {
+                Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => DocumentViewerScreen(document: doc),
+                ));
+              },
+              onLongPress: () => _showDocumentActionSheet(context, doc),
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.04),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2),
+                    )
+                  ],
+                ),
+                child: _cardContent(doc, isDark, false),
+              ),
+            ),
     );
   }
 
-  Widget _cardContent(VehicleDocument doc, bool isDark) {
+  Widget _cardContent(VehicleDocument doc, bool isDark, [bool isLiquidGlass = false]) {
     final isExpired = doc.isExpired;
     return Container(
-      decoration: BoxDecoration(
-        color: isDark
-            ? const Color(0xFF0F172A).withValues(alpha: 0.85)
-            : Colors.white.withValues(alpha: 0.97),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: isDark
-              ? Colors.white.withValues(alpha: 0.13)
-              : const Color(0xFFCBD5E1),
-          width: 1,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.04),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
-          )
-        ],
-      ),
+      decoration: isLiquidGlass
+          ? null
+          : BoxDecoration(
+              color: isDark
+                  ? const Color(0xFF0F172A).withValues(alpha: 0.85)
+                  : Colors.white.withValues(alpha: 0.97),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: isDark
+                    ? Colors.white.withValues(alpha: 0.13)
+                    : const Color(0xFFCBD5E1),
+                width: 1,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.04),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2),
+                )
+              ],
+            ),
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Row(

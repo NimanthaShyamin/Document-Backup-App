@@ -142,13 +142,6 @@ class GeminiDocumentExtractionService {
       );
     }
 
-    if (!effectiveKey.startsWith('AIza')) {
-      developer.log('[GeminiExtractionService] Invalid key prefix detected: ${effectiveKey.substring(0, 4)}...');
-      return ExtractedDocumentDetails.error(
-        'Invalid API Key format: Google AI Studio keys start with "AIzaSy...". Please generate a free API key at aistudio.google.com and update it in Settings.',
-      );
-    }
-
     try {
       final bytes = await file.readAsBytes();
       final mimeType = _determineMimeType(file.path);
@@ -215,7 +208,7 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
 
           if (sdkErrorStr.contains('API key not valid') || sdkErrorStr.contains('API_KEY_INVALID')) {
             return ExtractedDocumentDetails.error(
-              'Invalid API Key: Google Gemini rejected this key. Please check your key in Settings (Gemini keys start with "AIzaSy...").',
+              'Invalid API Key: Google Gemini rejected this key. Please check your key in Settings.',
             );
           }
 
@@ -344,7 +337,7 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
         } catch (_) {}
 
         if (errorMsg.contains('API_KEY_INVALID') || errorMsg.contains('API key not valid')) {
-          errorMsg = 'Invalid Gemini API key. Keys start with "AIzaSy...". Please verify in Settings.';
+          errorMsg = 'Invalid Gemini API key. Please verify your key in Settings.';
         } else if (errorMsg.contains('SERVICE_DISABLED') || errorMsg.contains('has not been used in project')) {
           errorMsg = 'Generative Language API is disabled in your Google Cloud Project. Please enable it in Google Cloud Console.';
         }
