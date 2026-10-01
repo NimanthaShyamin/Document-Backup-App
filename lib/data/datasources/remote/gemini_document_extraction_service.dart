@@ -19,6 +19,7 @@ class ExtractedDocumentDetails {
   final Map<String, dynamic> visibleFields;
   final String? hiddenContext;
   final bool isAiDetected;
+  final bool requiresAiScan;
   final String? rawResponse;
   final String? errorMessage;
 
@@ -32,17 +33,22 @@ class ExtractedDocumentDetails {
     this.visibleFields = const {},
     this.hiddenContext,
     required this.isAiDetected,
+    this.requiresAiScan = false,
     this.rawResponse,
     this.errorMessage,
   });
 
   factory ExtractedDocumentDetails.empty() {
-    return const ExtractedDocumentDetails(isAiDetected: false);
+    return const ExtractedDocumentDetails(
+      isAiDetected: false,
+      requiresAiScan: true,
+    );
   }
 
   factory ExtractedDocumentDetails.error(String message) {
     return ExtractedDocumentDetails(
       isAiDetected: false,
+      requiresAiScan: true,
       errorMessage: message,
     );
   }
@@ -88,7 +94,9 @@ class GeminiDocumentExtractionService {
 
   /// Verified multimodal vision models that reliably support images and PDFs on current Gemini API.
   static const List<String> _verifiedVisionModels = [
+    'gemini-2.5-flash',
     'gemini-flash-lite-latest',
+    'gemini-2.0-flash',
     'gemini-3.1-flash-lite',
     'gemini-3.5-flash-lite',
     'gemini-flash-latest',
@@ -155,33 +163,46 @@ class GeminiDocumentExtractionService {
       final mimeType = _determineMimeType(file.path);
 
       const prompt = '''
-You are an expert AI document scanner and analyzer for an all-in-one universal document vault.
-Analyze this document file and accurately extract its core details and key metadata:
-1. title: A descriptive and clean document title (e.g. "National Identity Card", "Sri Lanka Driving License", "Qatar Airways Flight Ticket", "Motor Insurance Policy", "Vehicle Revenue License", "Electricity Utility Bill", "University Degree Certificate").
-2. category: The primary category of the document. Choose the best matching ID from:
-   - "id_card" (National ID, Passport, Resident Card)
-   - "driving_license" (Driving/Driver's License)
+You are an advanced, universal AI document analyzer and vision perception engine.
+Analyze this document (which can be an invoice, ID card, driving license, vehicle document, ticket, bill, certificate, receipt, or any other document) and extract structured metadata:
+
+1. "category": Intelligently decide the category. Prioritize matching one of these standard preset IDs if appropriate:
+   - "id_card" (National ID, Passport, Residence Permit)
+   - "driving_license" (Driving License / Driver's Permit)
    - "vehicle" (Vehicle Registration, Ownership, CR, Logbook)
    - "bill" (Utility Bill, Tax Assessment, Invoice, Receipt)
-   - "e_ticket" (Flight Ticket, Train, Boarding Pass, Event Ticket)
-   - "certificate" (Academic, Birth, Marriage, Professional Certificate)
-   - "insurance_card" (Health, Vehicle, Life Insurance Policy)
-   - "revenue_license" (Annual Vehicle Revenue License)
+   - "e_ticket" (Flight Ticket, Train/Bus Ticket, Booking Confirmation)
+   - "certificate" (Educational, Degree, Birth, Marriage Certificate)
+   - "insurance_card" (Health, Motor, Life Insurance Policy)
+   - "revenue_license" (Vehicle Revenue License, Road Tax)
    - "fuel_qr" (Fuel Pass QR Code)
    - "general" (Any other personal or legal document)
-3. expiryDate: Expiry date, valid-until date, due date, or travel date formatted strictly as "YYYY-MM-DD" (or null if the document does not expire).
-4. visibleFields: A key-value object of all important identified secondary fields (e.g. "vehicleRegNo", "policyNo", "idNumber", "holderName", "issuer", "accountNo", "amountDue", "seatNo", "vin").
-5. hiddenContext: A concise 1-3 sentence summary describing key facts, parties, and context of this document for semantic search.
+   If none fit, provide a concise, clean lowercase snake_case category name.
+
+2. "title": A descriptive, clean, official title for the document (e.g. "National Identity Card", "Comprehensive Motor Insurance", "Electricity Utility Bill", "Sri Lanka Driving License", "Qatar Airways Flight Ticket").
+
+3. "expiry_date": The expiry date, valid-until date, travel date, or payment due date formatted strictly as "YYYY-MM-DD" (or null if the document does not expire).
+
+4. "dynamic_visible_fields": A JSON array of the 3 to 5 most critical, user-facing details that the user would want to quickly reference on their screen.
+   Format as:
+   [
+     {"label": "ID Number", "value": "..."},
+     {"label": "Policy / Ref No", "value": "..."},
+     {"label": "Holder Name", "value": "..."}
+   ]
+   (If vehicle document, include Registration No and Policy No. If bill, include Account No or Due Amount. If ID, include ID Number. If ticket, include PNR/Booking Ref.)
+
+5. "hidden_context": Crucially, extract EVERYTHING else visible in the document to power deep AI semantic search and chat queries. Include all secondary names, addresses, serial numbers, VIN, engine numbers, transaction IDs, tax IDs, MAC addresses, warranty clauses, shop details, fine print, and timestamps. Dump this into a single, raw context string.
 
 Return ONLY a valid JSON object without markdown fences, following this exact schema:
 {
-  "title": "string or null",
-  "category": "string or null",
-  "expiryDate": "YYYY-MM-DD or null",
-  "visibleFields": {
-    "key": "value"
-  },
-  "hiddenContext": "string or null"
+  "category": "string",
+  "title": "string",
+  "expiry_date": "YYYY-MM-DD or null",
+  "dynamic_visible_fields": [
+    {"label": "string", "value": "string"}
+  ],
+  "hidden_context": "string"
 }
 ''';
 
@@ -388,16 +409,31 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
       final dynamic decoded = jsonDecode(cleanJson);
       if (decoded is! Map<String, dynamic>) return null;
 
-      final regNo = decoded['vehicleRegNo'] as String?;
       final title = decoded['title'] as String?;
-      final policyNo = decoded['policyNo'] as String?;
       final categoryStr = (decoded['category'] ?? decoded['documentType']) as String?;
-      final expiryStr = decoded['expiryDate'] as String?;
-      final hiddenCtx = decoded['hiddenContext'] as String?;
+      final expiryStr = (decoded['expiry_date'] ?? decoded['expiryDate']) as String?;
+      final hiddenCtx = (decoded['hidden_context'] ?? decoded['hiddenContext']) as String?;
+      final regNo = decoded['vehicleRegNo'] as String?;
+      final policyNo = decoded['policyNo'] as String?;
 
       Map<String, dynamic> visibleFields = {};
-      if (decoded['visibleFields'] is Map) {
+
+      // 1. Parse dynamic_visible_fields array: [{"label": "...", "value": "..."}]
+      final dynFields = decoded['dynamic_visible_fields'];
+      if (dynFields is List) {
+        for (final item in dynFields) {
+          if (item is Map) {
+            final label = item['label']?.toString().trim();
+            final value = item['value']?.toString().trim();
+            if (label != null && label.isNotEmpty && value != null && value.isNotEmpty) {
+              visibleFields[label] = value;
+            }
+          }
+        }
+      } else if (decoded['visibleFields'] is Map) {
         visibleFields = Map<String, dynamic>.from(decoded['visibleFields'] as Map);
+      } else if (dynFields is Map) {
+        visibleFields = Map<String, dynamic>.from(dynFields);
       }
 
       // Preserve legacy vehicle identifiers in visibleFields if present
@@ -406,6 +442,29 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
       }
       if (policyNo != null && policyNo.trim().isNotEmpty && policyNo != 'null' && !visibleFields.containsKey('policyNo')) {
         visibleFields['policyNo'] = policyNo.trim();
+      }
+
+      // Automatically search dynamic fields for vehicle reg or policy numbers for backwards compatibility
+      String? effectiveRegNo = (regNo != null && regNo.trim().isNotEmpty && regNo != 'null') ? regNo.trim() : null;
+      String? effectivePolicyNo = (policyNo != null && policyNo.trim().isNotEmpty && policyNo != 'null') ? policyNo.trim() : null;
+
+      if (effectiveRegNo == null) {
+        for (final entry in visibleFields.entries) {
+          final lk = entry.key.toLowerCase();
+          if (lk.contains('reg') || lk.contains('plate') || lk.contains('vehicle no')) {
+            effectiveRegNo = entry.value.toString();
+            break;
+          }
+        }
+      }
+      if (effectivePolicyNo == null) {
+        for (final entry in visibleFields.entries) {
+          final lk = entry.key.toLowerCase();
+          if (lk.contains('policy') || lk.contains('insurance no') || lk.contains('pnr')) {
+            effectivePolicyNo = entry.value.toString();
+            break;
+          }
+        }
       }
 
       DocumentType? docType;
@@ -420,14 +479,6 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
         } catch (_) {}
       }
 
-      final effectiveRegNo = (regNo != null && regNo.trim().isNotEmpty && regNo != 'null')
-          ? regNo.trim()
-          : (visibleFields['vehicleRegNo'] as String?);
-
-      final effectivePolicyNo = (policyNo != null && policyNo.trim().isNotEmpty && policyNo != 'null')
-          ? policyNo.trim()
-          : (visibleFields['policyNo'] as String?);
-
       final details = ExtractedDocumentDetails(
         vehicleRegNo: effectiveRegNo,
         title: (title != null && title.trim().isNotEmpty && title != 'null') ? title.trim() : null,
@@ -438,6 +489,7 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
         visibleFields: visibleFields,
         hiddenContext: (hiddenCtx != null && hiddenCtx.trim().isNotEmpty && hiddenCtx != 'null') ? hiddenCtx.trim() : null,
         isAiDetected: true,
+        requiresAiScan: false,
         rawResponse: cleanJson,
       );
 

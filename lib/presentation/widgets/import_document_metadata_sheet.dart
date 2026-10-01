@@ -74,6 +74,7 @@ class _ImportDocumentMetadataSheetState
   bool _isGeminiAnalyzing = true;
   bool _geminiAttempted = false;
   bool _geminiFoundDetails = false;
+  bool _requiresAiScan = true;
   String? _geminiStatusMessage;
 
   String? _validationError;
@@ -129,6 +130,7 @@ class _ImportDocumentMetadataSheetState
           _isGeminiAnalyzing = false;
           _geminiAttempted = true;
           _geminiFoundDetails = false;
+          _requiresAiScan = true;
           _geminiStatusMessage =
               'Gemini API key is not configured. Please enter document details manually below, or add your Google AI Studio API key in Settings.';
         });
@@ -152,6 +154,7 @@ class _ImportDocumentMetadataSheetState
         setState(() {
           _geminiAttempted = true;
           _geminiFoundDetails = true;
+          _requiresAiScan = details.requiresAiScan;
 
           if (details.title != null && details.title!.isNotEmpty) {
             _titleController.text = details.title!;
@@ -172,6 +175,7 @@ class _ImportDocumentMetadataSheetState
         setState(() {
           _geminiAttempted = true;
           _geminiFoundDetails = false;
+          _requiresAiScan = true;
           _geminiStatusMessage = details.errorMessage ??
               'Gemini could not detect details from this document. Please enter the details manually below.';
         });
@@ -181,6 +185,7 @@ class _ImportDocumentMetadataSheetState
         setState(() {
           _geminiAttempted = true;
           _geminiFoundDetails = false;
+          _requiresAiScan = true;
           _geminiStatusMessage =
               'Gemini scanning encountered an issue ($e). Please manually enter document details below.';
         });
@@ -225,6 +230,7 @@ class _ImportDocumentMetadataSheetState
         expiryDate: _selectedExpiry,
         visibleFields: _visibleFields,
         hiddenContext: _hiddenContext,
+        requiresAiScan: _requiresAiScan,
         sourceFile: widget.sourceFile,
       );
 
