@@ -94,6 +94,13 @@ class GeminiDocumentExtractionService {
 
   /// Verified multimodal vision models that reliably support images and PDFs on current Gemini API.
   static const List<String> _verifiedVisionModels = [
+    'gemini-3.1-flash-lite',
+    'gemini-3.5-flash',
+    'gemini-flash-latest',
+  ];
+
+  /// Deprecated models that are no longer available on Google Gemini API.
+  static const List<String> _deprecatedVisionModels = [
     'gemini-2.5-flash',
     'gemini-2.0-flash',
     'gemini-1.5-flash',
@@ -128,7 +135,9 @@ class GeminiDocumentExtractionService {
       } catch (_) {}
     }
 
-    if (_cachedWorkingModel != null && !_isInvalidForVision(_cachedWorkingModel!)) {
+    if (_cachedWorkingModel != null &&
+        !_isInvalidForVision(_cachedWorkingModel!) &&
+        !_deprecatedVisionModels.contains(_cachedWorkingModel!)) {
       candidates.add(_cachedWorkingModel!);
     }
 
@@ -227,8 +236,8 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
             ];
 
             final response = await model.generateContent(content).timeout(
-              const Duration(seconds: 10),
-              onTimeout: () => throw TimeoutException('Gemini AI request timed out after 10 seconds.'),
+              const Duration(seconds: 15),
+              onTimeout: () => throw TimeoutException('Gemini AI request timed out after 15 seconds.'),
             );
             final responseText = response.text;
 
@@ -256,6 +265,17 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
               );
             }
 
+            // If this model is not found or no longer available, skip immediately to next model without wasting REST upload
+            final isNotFound = sdkErrorStr.contains('NOT_FOUND') ||
+                sdkErrorStr.contains('not found') ||
+                sdkErrorStr.contains('no longer available') ||
+                sdkErrorStr.contains('not supported for generateContent');
+            if (isNotFound) {
+              developer.log('[GeminiExtractionService] Model $modelName is not found or deprecated. Skipping to next candidate.');
+              if (_cachedWorkingModel == modelName) _cachedWorkingModel = null;
+              continue;
+            }
+
             // If this model does not support images, skip immediately to the next candidate
             if (sdkErrorStr.contains('Image input modality is not enabled')) {
               if (_cachedWorkingModel == modelName) _cachedWorkingModel = null;
@@ -272,13 +292,7 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
               continue;
             }
 
-            final isNotFound = sdkErrorStr.contains('NOT_FOUND') ||
-                sdkErrorStr.contains('not found') ||
-                sdkErrorStr.contains('not supported for generateContent');
-
-            if (!isNotFound) {
-              lastErrorMsg = sdkErrorStr;
-            }
+            lastErrorMsg = sdkErrorStr;
 
             // 2. Direct REST fallback for this model
             final restResult = await _restApiFallback(
@@ -308,9 +322,9 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
 
         return ExtractedDocumentDetails.error(lastErrorMsg);
       }).timeout(
-        const Duration(seconds: 25),
+        const Duration(seconds: 40),
         onTimeout: () => ExtractedDocumentDetails.error(
-          'Document analysis timed out after 25 seconds. Please retry.',
+          'Document analysis timed out after 40 seconds. Please retry.',
         ),
       );
     } catch (e, stack) {
@@ -357,7 +371,7 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(payload),
       ).timeout(
-        const Duration(seconds: 10),
+        const Duration(seconds: 15),
         onTimeout: () => throw TimeoutException('Connection to Gemini REST API timed out.'),
       );
 
@@ -385,7 +399,10 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
           }
         } catch (_) {}
 
-        if (response.statusCode == 429 || errorMsg.contains('RESOURCE_EXHAUSTED')) {
+        if (response.statusCode == 404 || errorMsg.contains('NOT_FOUND') || errorMsg.contains('no longer available')) {
+          if (_cachedWorkingModel == modelName) _cachedWorkingModel = null;
+          return ExtractedDocumentDetails.error('Model not found ($modelName): $errorMsg');
+        } else if (response.statusCode == 429 || errorMsg.contains('RESOURCE_EXHAUSTED')) {
           errorMsg = 'Gemini API quota exceeded (Rate limit / 429). Will retry after cooldown.';
         } else if (errorMsg.contains('API_KEY_INVALID') || errorMsg.contains('API key not valid')) {
           errorMsg = 'Invalid Gemini API key. Please verify your key in Settings.';
@@ -415,6 +432,13 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
         cleanJson = cleanJson.substring(0, cleanJson.length - 3);
       }
       cleanJson = cleanJson.trim();
+
+      // Extract text between first '{' and last '}' in case the model included surrounding commentary
+      final firstBrace = cleanJson.indexOf('{');
+      final lastBrace = cleanJson.lastIndexOf('}');
+      if (firstBrace != -1 && lastBrace != -1 && lastBrace >= firstBrace) {
+        cleanJson = cleanJson.substring(firstBrace, lastBrace + 1).trim();
+      }
 
       final dynamic decoded = jsonDecode(cleanJson);
       if (decoded is! Map<String, dynamic>) return null;

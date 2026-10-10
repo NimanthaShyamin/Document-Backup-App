@@ -3,12 +3,14 @@ import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:drift/drift.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/app_preferences_provider.dart';
 import '../../data/datasources/local/app_database.dart';
 import '../../data/datasources/remote/gemini_document_extraction_service.dart';
+import '../../domain/entities/sync_status.dart';
 import '../../domain/entities/vehicle_document.dart';
 import 'document_providers.dart';
 
@@ -17,11 +19,13 @@ enum ScanStatus {
   idle,
   scanning,
   waitingRateLimit,
+  offline,
 }
 
 /// State exposed to the UI representing the global sequential AI extraction queue.
 class ForegroundScanState {
   final ScanStatus status;
+  final bool isOnline;
   final String? activeDocumentId;
   final int baseSecondsRemaining; // Seconds until the NEXT document starts scanning
   final List<String> pendingQueueIds; // Pending document IDs in FIFO order
@@ -29,6 +33,7 @@ class ForegroundScanState {
 
   const ForegroundScanState({
     this.status = ScanStatus.idle,
+    this.isOnline = true,
     this.activeDocumentId,
     this.baseSecondsRemaining = 0,
     this.pendingQueueIds = const [],
@@ -47,10 +52,12 @@ class ForegroundScanState {
 
   /// Calculates the exact remaining seconds for a given document in the global queue.
   ///
+  /// - If offline: returns null (no countdown timer should run or be displayed).
   /// - Active document: returns 0.
-  /// - Next document (index 0): returns `baseSecondsRemaining` (ticking down from 60s).
-  /// - Deep queue documents (index k): adds 60 seconds per position in the queue.
+  /// - 1st Queued Document (index 0): returns `baseSecondsRemaining` (ticking down from 60s).
+  /// - Deep Queue Documents (index k): adds 60 seconds per position in the queue.
   int? getWaitSecondsFor(String docId) {
+    if (!isOnline || status == ScanStatus.offline) return null;
     if (isScanning(docId)) return 0;
 
     int index = pendingQueueIds.indexOf(docId);
@@ -63,18 +70,22 @@ class ForegroundScanState {
     }
 
     if (status == ScanStatus.scanning) {
-      // An active document is currently scanning; queued docs wait 60s per position
-      return 60 + (index * 60);
+      // 1st document is scanning with no timer.
+      // 2nd document (index 0 of remaining) is counting down from baseSecondsRemaining (60s).
+      // Deep queue documents add 60s per position in imported sequence.
+      return baseSecondsRemaining + (index * 60);
     } else if (status == ScanStatus.waitingRateLimit) {
       return baseSecondsRemaining + (index * 60);
     } else {
-      // Idle / ready to start
+      // Idle / ready to start:
+      // index 0 -> 0s, index 1 -> 60s, index k -> k * 60s
       return index * 60;
     }
   }
 
   ForegroundScanState copyWith({
     ScanStatus? status,
+    bool? isOnline,
     String? activeDocumentId,
     int? baseSecondsRemaining,
     List<String>? pendingQueueIds,
@@ -82,6 +93,7 @@ class ForegroundScanState {
   }) {
     return ForegroundScanState(
       status: status ?? this.status,
+      isOnline: isOnline ?? this.isOnline,
       activeDocumentId: activeDocumentId ?? this.activeDocumentId,
       baseSecondsRemaining: baseSecondsRemaining ?? this.baseSecondsRemaining,
       pendingQueueIds: pendingQueueIds ?? this.pendingQueueIds,
@@ -91,19 +103,23 @@ class ForegroundScanState {
 
   @override
   String toString() =>
-      'ForegroundScanState(status: $status, activeId: $activeDocumentId, baseRemaining: $baseSecondsRemaining, queueLen: ${pendingQueueIds.length})';
+      'ForegroundScanState(status: $status, online: $isOnline, activeId: $activeDocumentId, baseRemaining: $baseSecondsRemaining, queueLen: ${pendingQueueIds.length})';
 }
 
 /// Riverpod StateNotifier managing a Global Cooldown Queue for foreground AI scanning.
 ///
-/// Ensures:
-/// 1. Documents flagged with `requiresAiScan == true` are processed strictly ONE by ONE.
-/// 2. First document processes IMMEDIATELY (0s) if no scan occurred in the last 60 seconds.
-/// 3. Subsequent documents enforce a strict 60-second cooldown via a single global timer.
-/// 4. Deep queue items dynamically calculate their wait time (+60s per queue position).
-/// 5. Manual override ("Force Scan Now") bypasses the cooldown for that specific document.
+/// Rules:
+/// 1. Offline Mode: All timers are stopped. No countdowns display.
+/// 2. Going Online:
+///    - 1st imported document scans IMMEDIATELY with NO timer (0s delay).
+///    - 2nd imported document starts 1 min (60s) timer.
+///    - Subsequent documents start with previous document delay + 1 min (120s, 180s...).
+/// 3. If the app goes offline, ALL timers stop immediately until back online.
+/// 4. When re-connected online, sequence resets with remaining pending docs.
 class ForegroundScannerNotifier extends StateNotifier<ForegroundScanState> {
   final Ref _ref;
+  final Connectivity _connectivity;
+  final Future<bool> Function()? isOnlineChecker;
 
   /// Global timestamp tracking the completion of the last AI extraction across the entire app
   static DateTime? lastScanCompletionTime;
@@ -113,9 +129,42 @@ class ForegroundScannerNotifier extends StateNotifier<ForegroundScanState> {
   bool _isLoopRunning = false;
   String? _forcedDocumentId;
   final Map<String, int> _scanAttempts = {};
+  int _currentBaseRemaining = 0;
 
-  ForegroundScannerNotifier(this._ref) : super(const ForegroundScanState()) {
-    // Listen to changes in the document stream to detect newly imported documents
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
+  ProviderSubscription<AsyncValue<SyncEngineState>>? _syncEngineSubscription;
+
+  ForegroundScannerNotifier(
+    this._ref, {
+    Connectivity? connectivity,
+    this.isOnlineChecker,
+  })  : _connectivity = connectivity ?? Connectivity(),
+        super(const ForegroundScanState()) {
+    _initialize();
+  }
+
+  void _initialize() {
+    // 1. Listen to connectivity state changes
+    _connectivitySubscription = _connectivity.onConnectivityChanged.listen((results) {
+      final hasConnection = results.any((r) => r != ConnectivityResult.none);
+      _handleConnectivityChanged(hasConnection);
+    });
+
+    // 2. Listen to Sync Engine state changes (e.g. SyncEngineOffline)
+    _syncEngineSubscription = _ref.listen<AsyncValue<SyncEngineState>>(
+      syncEngineStateProvider,
+      (previous, next) {
+        final syncState = next.valueOrNull;
+        if (syncState is SyncEngineOffline) {
+          _setOffline();
+        } else if (syncState != null) {
+          _checkAndSetOnline();
+        }
+      },
+      fireImmediately: false,
+    );
+
+    // 3. Listen to reactive vehicle documents
     _ref.listen<AsyncValue<List<VehicleDocument>>>(
       vehicleDocumentsStreamProvider,
       (previous, next) {
@@ -125,17 +174,95 @@ class ForegroundScannerNotifier extends StateNotifier<ForegroundScanState> {
       },
       fireImmediately: true,
     );
+
+    // 4. Initial network check
+    Future.microtask(() => _checkAndSetOnline());
   }
 
   @override
   void dispose() {
     _stopGlobalTimer();
+    _connectivitySubscription?.cancel();
+    _syncEngineSubscription?.close();
     super.dispose();
   }
 
   void _stopGlobalTimer() {
     _globalCooldownTimer?.cancel();
     _globalCooldownTimer = null;
+  }
+
+  Future<void> _handleConnectivityChanged(bool hasConnection) async {
+    if (!hasConnection) {
+      _setOffline();
+    } else {
+      await _checkAndSetOnline();
+    }
+  }
+
+  void _setOffline() {
+    if (!state.isOnline && state.status == ScanStatus.offline) return;
+    developer.log('[ForegroundScanner] Device / app went offline. Halting all scanning timers.');
+
+    _stopGlobalTimer();
+    if (_cooldownCompleter != null && !_cooldownCompleter!.isCompleted) {
+      _cooldownCompleter!.complete();
+    }
+    _currentBaseRemaining = 0;
+    _isLoopRunning = false;
+
+    state = state.copyWith(
+      isOnline: false,
+      status: ScanStatus.offline,
+      baseSecondsRemaining: 0,
+      activeDocumentId: null,
+    );
+  }
+
+  Future<void> _checkAndSetOnline() async {
+    final online = await _checkIsOnline();
+    if (online) {
+      if (!state.isOnline || state.status == ScanStatus.offline) {
+        developer.log('[ForegroundScanner] Device / app is online. Resuming sequential queue.');
+        state = state.copyWith(
+          isOnline: true,
+          status: ScanStatus.idle,
+        );
+        if (!_isLoopRunning) {
+          _startQueueLoop();
+        }
+      }
+    } else {
+      _setOffline();
+    }
+  }
+
+  Future<bool> _checkIsOnline() async {
+    if (isOnlineChecker != null) {
+      return await isOnlineChecker!();
+    }
+
+    try {
+      final syncState = _ref.read(syncEngineStateProvider).valueOrNull;
+      if (syncState is SyncEngineOffline) {
+        return false;
+      }
+
+      final results = await _connectivity.checkConnectivity();
+      if (results.every((r) => r == ConnectivityResult.none)) {
+        return false;
+      }
+
+      if (Platform.environment.containsKey('FLUTTER_TEST')) {
+        return results.any((r) => r != ConnectivityResult.none);
+      }
+
+      final lookup = await InternetAddress.lookup('generativelanguage.googleapis.com')
+          .timeout(const Duration(seconds: 2), onTimeout: () => []);
+      return lookup.isNotEmpty && lookup[0].rawAddress.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// Triggered whenever the reactive document stream updates.
@@ -148,19 +275,22 @@ class ForegroundScannerNotifier extends StateNotifier<ForegroundScanState> {
         .map((d) => d.id)
         .toList();
 
-    // Update pending queue IDs in the state without resetting active scanning
     state = state.copyWith(pendingQueueIds: pendingIds);
 
     if (pending.isEmpty) {
-      if (state.status != ScanStatus.idle) {
+      if (state.status != ScanStatus.idle && state.isOnline) {
         _stopGlobalTimer();
-        state = const ForegroundScanState(status: ScanStatus.idle);
+        state = state.copyWith(
+          status: ScanStatus.idle,
+          baseSecondsRemaining: 0,
+          activeDocumentId: null,
+        );
       }
       return;
     }
 
-    // If loop is not already running, kick off the sequential queue loop
-    if (!_isLoopRunning) {
+    // Only start loop if the app is online!
+    if (state.isOnline && !_isLoopRunning) {
       _startQueueLoop();
     }
   }
@@ -169,13 +299,19 @@ class ForegroundScannerNotifier extends StateNotifier<ForegroundScanState> {
   Future<void> forceScan(String documentId) async {
     developer.log('[ForegroundScanner] Force Scan requested for document: $documentId');
 
+    if (!state.isOnline) {
+      developer.log('[ForegroundScanner] Cannot force scan while offline.');
+      return;
+    }
+
     if (state.isScanning(documentId)) {
       developer.log('[ForegroundScanner] Document $documentId is already scanning.');
       return;
     }
 
     _forcedDocumentId = documentId;
-    lastScanCompletionTime = null; // Reset rate limit for immediate execution
+    _currentBaseRemaining = 0;
+    _stopGlobalTimer();
 
     // Interrupt any active cooldown wait so the loop proceeds immediately
     if (_cooldownCompleter != null && !_cooldownCompleter!.isCompleted) {
@@ -193,6 +329,35 @@ class ForegroundScannerNotifier extends StateNotifier<ForegroundScanState> {
     _runSequentialQueueLoop();
   }
 
+  void _startTickingTimer(int seconds) {
+    _stopGlobalTimer();
+    _currentBaseRemaining = seconds;
+    _cooldownCompleter = Completer<void>();
+
+    state = state.copyWith(baseSecondsRemaining: seconds);
+
+    _globalCooldownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!state.isOnline) {
+        timer.cancel();
+        if (_cooldownCompleter != null && !_cooldownCompleter!.isCompleted) {
+          _cooldownCompleter!.complete();
+        }
+        return;
+      }
+
+      _currentBaseRemaining--;
+      if (_currentBaseRemaining <= 0) {
+        _currentBaseRemaining = 0;
+        timer.cancel();
+        if (_cooldownCompleter != null && !_cooldownCompleter!.isCompleted) {
+          _cooldownCompleter!.complete();
+        }
+      }
+
+      state = state.copyWith(baseSecondsRemaining: _currentBaseRemaining);
+    });
+  }
+
   /// The core single-loop sequential executor.
   Future<void> _runSequentialQueueLoop() async {
     if (_isLoopRunning) return;
@@ -201,18 +366,18 @@ class ForegroundScannerNotifier extends StateNotifier<ForegroundScanState> {
     developer.log('[ForegroundScanner] Starting global sequential queue loop.');
 
     try {
-      while (true) {
+      while (state.isOnline) {
         final db = _ref.read(appDatabaseProvider);
         final apiKey = _ref.read(geminiApiKeyProvider);
 
         if (apiKey.trim().isEmpty) {
           developer.log('[ForegroundScanner] Gemini API key not configured. Halting foreground queue.');
           _stopGlobalTimer();
-          state = const ForegroundScanState(status: ScanStatus.idle);
+          state = state.copyWith(status: ScanStatus.idle, baseSecondsRemaining: 0);
           break;
         }
 
-        // Query pending documents from Drift DB
+        // Query pending documents from Drift DB, ordered strictly by oldest imported sequence first
         final pendingDocs = await (db.select(db.vehicleDocuments)
               ..where((t) => t.requiresAiScan.equals(true))
               ..orderBy([(t) => OrderingTerm(expression: t.createdAt, mode: OrderingMode.asc)]))
@@ -221,111 +386,84 @@ class ForegroundScannerNotifier extends StateNotifier<ForegroundScanState> {
         if (pendingDocs.isEmpty) {
           developer.log('[ForegroundScanner] No more pending documents. Queue is idle.');
           _stopGlobalTimer();
-          state = const ForegroundScanState(status: ScanStatus.idle);
+          state = state.copyWith(
+            status: ScanStatus.idle,
+            baseSecondsRemaining: 0,
+            activeDocumentId: null,
+            pendingQueueIds: [],
+          );
+          break;
+        }
+
+        // Verify still online before processing
+        if (!state.isOnline || !await _checkIsOnline()) {
+          _setOffline();
           break;
         }
 
         // Determine which document to process: forced override has top priority
         VehicleDocumentData docToProcess;
         if (_forcedDocumentId != null) {
-          final forcedMatch = pendingDocs.where((d) => d.id == _forcedDocumentId).firstOrNull;
-          if (forcedMatch != null) {
-            docToProcess = forcedMatch;
-          } else {
-            docToProcess = pendingDocs.first;
-          }
+          docToProcess = pendingDocs.firstWhere(
+            (d) => d.id == _forcedDocumentId,
+            orElse: () => pendingDocs.first,
+          );
           _forcedDocumentId = null;
         } else {
           docToProcess = pendingDocs.first;
         }
 
-        // Evaluate token bucket timing relative to global lastScanCompletionTime
-        final now = DateTime.now();
-        if (lastScanCompletionTime != null) {
-          final elapsedSeconds = now.difference(lastScanCompletionTime!).inSeconds;
-          final waitSeconds = 60 - elapsedSeconds;
-
-          if (waitSeconds > 0) {
-            final queuedIds = pendingDocs.map((d) => d.id).toList();
-            developer.log('[ForegroundScanner] Rate limit active. Next scan starts in $waitSeconds seconds.');
-            await _waitForCooldown(waitSeconds, queuedIds);
-
-            // Re-check after cooldown completes (document might have been deleted)
-            continue;
-          }
-        }
-
-        // Rate limit satisfied (or first document): Scan immediately!
         final remainingIds = pendingDocs
             .where((d) => d.id != docToProcess.id)
             .map((d) => d.id)
             .toList();
 
-        _stopGlobalTimer();
-        state = ForegroundScanState(
+        // 1st Document scans with NO TIMER (0s delay).
+        // 2nd document (and deep queue) starts its 60s countdown timer NOW.
+        if (remainingIds.isNotEmpty) {
+          _startTickingTimer(60);
+        } else {
+          _stopGlobalTimer();
+          _currentBaseRemaining = 0;
+        }
+
+        state = state.copyWith(
           status: ScanStatus.scanning,
           activeDocumentId: docToProcess.id,
-          baseSecondsRemaining: 0,
+          baseSecondsRemaining: remainingIds.isNotEmpty ? _currentBaseRemaining : 0,
           pendingQueueIds: remainingIds,
-          lastScanCompletionTime: lastScanCompletionTime,
         );
 
-        developer.log('[ForegroundScanner] Processing document: ${docToProcess.id} ("${docToProcess.title}")');
+        developer.log('[ForegroundScanner] Actively scanning: ${docToProcess.id} ("${docToProcess.title}")');
         try {
           await _executeScan(db, apiKey, docToProcess);
         } finally {
           state = state.copyWith(activeDocumentId: null);
         }
 
-        // Record global completion time
-        lastScanCompletionTime = DateTime.now();
-        developer.log('[ForegroundScanner] Scan completed at $lastScanCompletionTime.');
+        // If app went offline during scan, break out cleanly
+        if (!state.isOnline) break;
+
+        // If there are more documents in queue, wait for the 60s cooldown timer to finish ticking
+        if (remainingIds.isNotEmpty && _currentBaseRemaining > 0) {
+          state = state.copyWith(
+            status: ScanStatus.waitingRateLimit,
+            activeDocumentId: null,
+          );
+          if (_cooldownCompleter != null && !_cooldownCompleter!.isCompleted) {
+            await _cooldownCompleter!.future;
+          }
+        }
       }
     } catch (e, stack) {
       developer.log('[ForegroundScanner] Error in queue loop: $e', error: e, stackTrace: stack);
-      state = const ForegroundScanState(status: ScanStatus.idle);
+      if (state.isOnline) {
+        state = state.copyWith(status: ScanStatus.idle);
+      }
     } finally {
       _isLoopRunning = false;
       developer.log('[ForegroundScanner] Global sequential queue loop finished.');
     }
-  }
-
-  /// Waits for the rate limit cooldown while broadcasting a 1-second ticking countdown to Riverpod.
-  Future<void> _waitForCooldown(int totalSeconds, List<String> queuedIds) async {
-    _stopGlobalTimer();
-    _cooldownCompleter = Completer<void>();
-
-    state = ForegroundScanState(
-      status: ScanStatus.waitingRateLimit,
-      activeDocumentId: null,
-      baseSecondsRemaining: totalSeconds,
-      pendingQueueIds: queuedIds,
-      lastScanCompletionTime: lastScanCompletionTime,
-    );
-
-    _globalCooldownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (lastScanCompletionTime == null) {
-        // Cooldown was manually bypassed by forceScan
-        timer.cancel();
-        if (!_cooldownCompleter!.isCompleted) _cooldownCompleter!.complete();
-        return;
-      }
-
-      final elapsed = DateTime.now().difference(lastScanCompletionTime!).inSeconds;
-      final remaining = 60 - elapsed;
-
-      if (remaining <= 0) {
-        timer.cancel();
-        if (!_cooldownCompleter!.isCompleted) _cooldownCompleter!.complete();
-      } else {
-        state = state.copyWith(
-          baseSecondsRemaining: remaining,
-        );
-      }
-    });
-
-    await _cooldownCompleter!.future;
-    _stopGlobalTimer();
   }
 
   /// Executes Gemini multimodal extraction and updates Drift DB.
@@ -347,8 +485,8 @@ class ForegroundScannerNotifier extends StateNotifier<ForegroundScanState> {
     try {
       final extractionService = GeminiDocumentExtractionService(apiKey: apiKey);
       final extracted = await extractionService.extractDetailsFromFile(file).timeout(
-        const Duration(seconds: 30),
-        onTimeout: () => ExtractedDocumentDetails.error('Scan timed out after 30 seconds.'),
+        const Duration(seconds: 45),
+        onTimeout: () => ExtractedDocumentDetails.error('Scan timed out after 45 seconds.'),
       );
 
       if (extracted.isAiDetected) {
@@ -403,6 +541,11 @@ class ForegroundScannerNotifier extends StateNotifier<ForegroundScanState> {
         await (db.update(db.vehicleDocuments)..where((t) => t.id.equals(docData.id))).write(
           const VehicleDocumentsCompanion(requiresAiScan: Value(false)),
         );
+      } else if (extracted.errorMessage != null &&
+          (extracted.errorMessage!.contains('quota exceeded') ||
+              extracted.errorMessage!.contains('429') ||
+              extracted.errorMessage!.contains('RESOURCE_EXHAUSTED'))) {
+        developer.log('[ForegroundScanner] Rate limit hit for ${docData.id}. Retaining scan flag for next cycle.');
       } else {
         final attempts = (_scanAttempts[docData.id] ?? 0) + 1;
         _scanAttempts[docData.id] = attempts;
@@ -416,7 +559,26 @@ class ForegroundScannerNotifier extends StateNotifier<ForegroundScanState> {
           );
         }
       }
+    } on SocketException catch (e) {
+      developer.log('[ForegroundScanner] SocketException scanning ${docData.id}: $e. Marking offline.');
+      _setOffline();
+    } on HttpException catch (e) {
+      developer.log('[ForegroundScanner] HttpException scanning ${docData.id}: $e. Marking offline.');
+      _setOffline();
     } catch (e, stack) {
+      final errStr = e.toString().toLowerCase();
+      if (errStr.contains('socket') ||
+          errStr.contains('network') ||
+          errStr.contains('failed host lookup') ||
+          errStr.contains('connection refused') ||
+          errStr.contains('connection closed') ||
+          errStr.contains('handshake') ||
+          errStr.contains('clientexception')) {
+        developer.log('[ForegroundScanner] Network error during scan of ${docData.id}: $e. Halting queue.');
+        _setOffline();
+        return;
+      }
+
       developer.log('[ForegroundScanner] Error executing scan for ${docData.id}: $e', error: e, stackTrace: stack);
       final attempts = (_scanAttempts[docData.id] ?? 0) + 1;
       _scanAttempts[docData.id] = attempts;

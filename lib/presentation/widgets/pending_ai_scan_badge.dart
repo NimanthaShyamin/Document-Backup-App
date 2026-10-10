@@ -6,10 +6,11 @@ import '../controllers/foreground_scanner_service.dart';
 /// Dynamic widget that reflects the live state of AI document scanning.
 ///
 /// Handles:
-/// 1. Document 1 (Actively scanning): Displays a live linear progress bar & "Scanning Document...".
-/// 2. Document 2 (Next in line): Displays live countdown based on the global timer (e.g. "Pending Scan (in 55s)").
-/// 3. Document 3+ (Deep queue): Calculates wait time by adding 60s per queue position (e.g. "Pending Scan (in 115s)").
-/// 4. Manual override: Provides a "Force Scan Now" button allowing immediate scan execution.
+/// 1. Offline Mode: Stops all countdown timers and displays "Pending AI Scan".
+/// 2. Document 1 (Actively scanning): Displays a live linear progress bar & "Scanning Document...".
+/// 3. Document 2 (Next in line): Displays live countdown based on the global timer (e.g. "Pending Scan (in 55s)").
+/// 4. Document 3+ (Deep queue): Calculates wait time by adding 60s per queue position (e.g. "Pending Scan (in 115s)").
+/// 5. Manual override: Provides a "Force Scan Now" button allowing immediate scan execution when online.
 class PendingAiScanBadge extends ConsumerWidget {
   final String documentId;
   final bool isDark;
@@ -98,7 +99,11 @@ class PendingAiScanBadge extends ConsumerWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
-                isCountdownActive ? Icons.timer_outlined : Icons.hourglass_top_rounded,
+                isCountdownActive
+                    ? Icons.timer_outlined
+                    : (!scanState.isOnline
+                        ? Icons.cloud_off_rounded
+                        : Icons.hourglass_top_rounded),
                 color: isDark ? Colors.amberAccent : Colors.amber.shade800,
                 size: 10,
               ),
@@ -120,6 +125,17 @@ class PendingAiScanBadge extends ConsumerWidget {
           color: Colors.transparent,
           child: InkWell(
             onTap: () {
+              if (!scanState.isOnline) {
+                ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                  const SnackBar(
+                    content: Text('Cannot scan while offline. Connect to the internet to scan.'),
+                    duration: Duration(seconds: 2),
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+                return;
+              }
+
               ref.read(foregroundScannerServiceProvider.notifier).forceScan(documentId);
               ScaffoldMessenger.maybeOf(context)?.showSnackBar(
                 const SnackBar(
