@@ -27,16 +27,18 @@ class _ChatMessage {
 /// over the user's entire document vault (e.g. "What's my TIN number?",
 /// "When does my insurance expire?").
 class AiChatSheet extends ConsumerStatefulWidget {
-  const AiChatSheet({super.key});
+  final VehicleDocument? targetDocument;
 
-  static Future<void> show(BuildContext context) {
+  const AiChatSheet({super.key, this.targetDocument});
+
+  static Future<void> show(BuildContext context, {VehicleDocument? targetDocument}) {
     return showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: Colors.transparent,
       enableDrag: true,
-      builder: (_) => const AiChatSheet(),
+      builder: (_) => AiChatSheet(targetDocument: targetDocument),
     );
   }
 
@@ -102,7 +104,11 @@ class _AiChatSheetState extends ConsumerState<AiChatSheet> {
     final apiKey = ref.read(geminiApiKeyProvider);
     final service = GeminiChatService(apiKey: apiKey);
 
-    final answer = await service.ask(question: question, documents: allDocs);
+    final answer = await service.ask(
+      question: question,
+      documents: allDocs,
+      targetDocument: widget.targetDocument,
+    );
 
     // Find referenced documents
     final referenced = allDocs
@@ -203,7 +209,9 @@ class _AiChatSheetState extends ConsumerState<AiChatSheet> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'AI Vault Assistant',
+                                widget.targetDocument != null
+                                    ? 'Document AI Assistant'
+                                    : 'AI Vault Assistant',
                                 style: TextStyle(
                                   fontSize: 15,
                                   fontWeight: FontWeight.bold,
@@ -212,13 +220,20 @@ class _AiChatSheetState extends ConsumerState<AiChatSheet> {
                                       : const Color(0xFF0F172A),
                                 ),
                               ),
-                              Text(
-                                'Ask anything about your documents',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: isDark
-                                      ? Colors.white54
-                                      : const Color(0xFF64748B),
+                              ConstrainedBox(
+                                constraints: const BoxConstraints(maxWidth: 220),
+                                child: Text(
+                                  widget.targetDocument != null
+                                      ? 'Chatting about ${widget.targetDocument!.title}'
+                                      : 'Ask anything about your documents',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: isDark
+                                        ? Colors.white54
+                                        : const Color(0xFF64748B),
+                                  ),
                                 ),
                               ),
                             ],
@@ -266,12 +281,23 @@ class _AiChatSheetState extends ConsumerState<AiChatSheet> {
   }
 
   Widget _buildWelcome(bool isDark, List<VehicleDocument> docs) {
-    final suggestions = [
-      'What\'s my TIN number?',
-      'When does my insurance expire?',
-      'Show me my ID details',
-      'What is my driving license number?',
-    ];
+    final suggestions = widget.targetDocument != null
+        ? [
+            'Summarize this document',
+            'What are the key details and dates?',
+            'What is the policy or registration number?',
+            'Are there any serial numbers or fine print clauses?',
+          ]
+        : [
+            'What\'s my TIN number?',
+            'When does my insurance expire?',
+            'Show me my ID details',
+            'What is my driving license number?',
+          ];
+
+    final welcomeText = widget.targetDocument != null
+        ? 'Hi! I am ready to answer any questions about "${widget.targetDocument!.title}". Ask me about its extracted details, validity, or fine print!'
+        : 'Hi! I can search through your ${docs.length} document${docs.length == 1 ? '' : 's'} and answer questions instantly.';
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
@@ -279,7 +305,7 @@ class _AiChatSheetState extends ConsumerState<AiChatSheet> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Hi! I can search through your ${docs.length} document${docs.length == 1 ? '' : 's'} and answer questions instantly.',
+            welcomeText,
             style: TextStyle(
               fontSize: 14,
               color: isDark ? Colors.white70 : const Color(0xFF475569),

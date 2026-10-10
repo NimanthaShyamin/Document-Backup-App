@@ -20,6 +20,8 @@ class VehicleDocument {
   final Map<String, dynamic> visibleFields; // Dynamic UI fields
   final String? hiddenContext; // Silent AI context & deep extracted text
   final bool requiresAiScan; // Flag indicating if document needs AI extraction
+  final bool isDeleted; // Soft-delete flag for Recycle Bin
+  final DateTime? deletedAt; // Timestamp when document was moved to Recycle Bin
 
   const VehicleDocument({
     required this.id,
@@ -38,6 +40,8 @@ class VehicleDocument {
     this.visibleFields = const {},
     this.hiddenContext,
     this.requiresAiScan = false,
+    this.isDeleted = false,
+    this.deletedAt,
   });
 
   bool get isExpired => expiryDate != null && expiryDate!.isBefore(DateTime.now());
@@ -59,6 +63,8 @@ class VehicleDocument {
     Map<String, dynamic>? visibleFields,
     String? hiddenContext,
     bool? requiresAiScan,
+    bool? isDeleted,
+    DateTime? deletedAt,
   }) {
     return VehicleDocument(
       id: id ?? this.id,
@@ -77,6 +83,8 @@ class VehicleDocument {
       visibleFields: visibleFields ?? this.visibleFields,
       hiddenContext: hiddenContext ?? this.hiddenContext,
       requiresAiScan: requiresAiScan ?? this.requiresAiScan,
+      isDeleted: isDeleted ?? this.isDeleted,
+      deletedAt: deletedAt ?? this.deletedAt,
     );
   }
 }

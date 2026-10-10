@@ -25,6 +25,24 @@ abstract class IVehicleDocumentRepository {
     required File sourceFile,
   });
 
-  /// Deletes a document locally and enqueues cloud deletion.
+  /// Deletes a document locally (soft-delete into Recycle Bin) and enqueues sync.
   Future<void> deleteDocument(String id);
+
+  /// Continuous reactive stream of documents currently in the Recycle Bin.
+  Stream<List<VehicleDocument>> watchRecycleBinDocuments();
+
+  /// Moves a document into the Recycle Bin (soft delete).
+  Future<void> moveToRecycleBin(String id);
+
+  /// Restores a document from the Recycle Bin back to the active vault.
+  Future<void> restoreFromRecycleBin(String id);
+
+  /// Permanently removes a document from vault, database, and cloud storage.
+  Future<void> permanentlyDeleteDocument(String id);
+
+  /// Permanently removes all documents currently in the Recycle Bin.
+  Future<void> emptyRecycleBin();
+
+  /// Automatically purges documents in the Recycle Bin older than retentionDays.
+  Future<void> autoCleanupRecycleBin(int retentionDays);
 }

@@ -111,6 +111,22 @@ class $VehicleDocumentsTable extends VehicleDocuments
       defaultConstraints: GeneratedColumn.constraintIsAlways(
           'CHECK ("requires_ai_scan" IN (0, 1))'),
       defaultValue: const Constant(false));
+  static const VerificationMeta _isDeletedMeta =
+      const VerificationMeta('isDeleted');
+  @override
+  late final GeneratedColumn<bool> isDeleted = GeneratedColumn<bool>(
+      'is_deleted', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("is_deleted" IN (0, 1))'),
+      defaultValue: const Constant(false));
+  static const VerificationMeta _deletedAtMeta =
+      const VerificationMeta('deletedAt');
+  @override
+  late final GeneratedColumn<int> deletedAt = GeneratedColumn<int>(
+      'deleted_at', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
   @override
   List<GeneratedColumn> get $columns => [
         id,
@@ -128,7 +144,9 @@ class $VehicleDocumentsTable extends VehicleDocuments
         category,
         visibleFields,
         hiddenContext,
-        requiresAiScan
+        requiresAiScan,
+        isDeleted,
+        deletedAt
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -244,6 +262,14 @@ class $VehicleDocumentsTable extends VehicleDocuments
           requiresAiScan.isAcceptableOrUnknown(
               data['requires_ai_scan']!, _requiresAiScanMeta));
     }
+    if (data.containsKey('is_deleted')) {
+      context.handle(_isDeletedMeta,
+          isDeleted.isAcceptableOrUnknown(data['is_deleted']!, _isDeletedMeta));
+    }
+    if (data.containsKey('deleted_at')) {
+      context.handle(_deletedAtMeta,
+          deletedAt.isAcceptableOrUnknown(data['deleted_at']!, _deletedAtMeta));
+    }
     return context;
   }
 
@@ -285,6 +311,10 @@ class $VehicleDocumentsTable extends VehicleDocuments
           .read(DriftSqlType.string, data['${effectivePrefix}hidden_context']),
       requiresAiScan: attachedDatabase.typeMapping
           .read(DriftSqlType.bool, data['${effectivePrefix}requires_ai_scan'])!,
+      isDeleted: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}is_deleted'])!,
+      deletedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}deleted_at']),
     );
   }
 
@@ -312,6 +342,8 @@ class VehicleDocumentData extends DataClass
   final String visibleFields;
   final String? hiddenContext;
   final bool requiresAiScan;
+  final bool isDeleted;
+  final int? deletedAt;
   const VehicleDocumentData(
       {required this.id,
       required this.documentType,
@@ -328,7 +360,9 @@ class VehicleDocumentData extends DataClass
       required this.category,
       required this.visibleFields,
       this.hiddenContext,
-      required this.requiresAiScan});
+      required this.requiresAiScan,
+      required this.isDeleted,
+      this.deletedAt});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -356,6 +390,10 @@ class VehicleDocumentData extends DataClass
       map['hidden_context'] = Variable<String>(hiddenContext);
     }
     map['requires_ai_scan'] = Variable<bool>(requiresAiScan);
+    map['is_deleted'] = Variable<bool>(isDeleted);
+    if (!nullToAbsent || deletedAt != null) {
+      map['deleted_at'] = Variable<int>(deletedAt);
+    }
     return map;
   }
 
@@ -385,6 +423,10 @@ class VehicleDocumentData extends DataClass
           ? const Value.absent()
           : Value(hiddenContext),
       requiresAiScan: Value(requiresAiScan),
+      isDeleted: Value(isDeleted),
+      deletedAt: deletedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(deletedAt),
     );
   }
 
@@ -410,6 +452,8 @@ class VehicleDocumentData extends DataClass
       visibleFields: serializer.fromJson<String>(json['visibleFields']),
       hiddenContext: serializer.fromJson<String?>(json['hiddenContext']),
       requiresAiScan: serializer.fromJson<bool>(json['requiresAiScan']),
+      isDeleted: serializer.fromJson<bool>(json['isDeleted']),
+      deletedAt: serializer.fromJson<int?>(json['deletedAt']),
     );
   }
   @override
@@ -432,6 +476,8 @@ class VehicleDocumentData extends DataClass
       'visibleFields': serializer.toJson<String>(visibleFields),
       'hiddenContext': serializer.toJson<String?>(hiddenContext),
       'requiresAiScan': serializer.toJson<bool>(requiresAiScan),
+      'isDeleted': serializer.toJson<bool>(isDeleted),
+      'deletedAt': serializer.toJson<int?>(deletedAt),
     };
   }
 
@@ -451,7 +497,9 @@ class VehicleDocumentData extends DataClass
           String? category,
           String? visibleFields,
           Value<String?> hiddenContext = const Value.absent(),
-          bool? requiresAiScan}) =>
+          bool? requiresAiScan,
+          bool? isDeleted,
+          Value<int?> deletedAt = const Value.absent()}) =>
       VehicleDocumentData(
         id: id ?? this.id,
         documentType: documentType ?? this.documentType,
@@ -471,6 +519,8 @@ class VehicleDocumentData extends DataClass
         hiddenContext:
             hiddenContext.present ? hiddenContext.value : this.hiddenContext,
         requiresAiScan: requiresAiScan ?? this.requiresAiScan,
+        isDeleted: isDeleted ?? this.isDeleted,
+        deletedAt: deletedAt.present ? deletedAt.value : this.deletedAt,
       );
   VehicleDocumentData copyWithCompanion(VehicleDocumentsCompanion data) {
     return VehicleDocumentData(
@@ -509,6 +559,8 @@ class VehicleDocumentData extends DataClass
       requiresAiScan: data.requiresAiScan.present
           ? data.requiresAiScan.value
           : this.requiresAiScan,
+      isDeleted: data.isDeleted.present ? data.isDeleted.value : this.isDeleted,
+      deletedAt: data.deletedAt.present ? data.deletedAt.value : this.deletedAt,
     );
   }
 
@@ -530,7 +582,9 @@ class VehicleDocumentData extends DataClass
           ..write('category: $category, ')
           ..write('visibleFields: $visibleFields, ')
           ..write('hiddenContext: $hiddenContext, ')
-          ..write('requiresAiScan: $requiresAiScan')
+          ..write('requiresAiScan: $requiresAiScan, ')
+          ..write('isDeleted: $isDeleted, ')
+          ..write('deletedAt: $deletedAt')
           ..write(')'))
         .toString();
   }
@@ -552,7 +606,9 @@ class VehicleDocumentData extends DataClass
       category,
       visibleFields,
       hiddenContext,
-      requiresAiScan);
+      requiresAiScan,
+      isDeleted,
+      deletedAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -572,7 +628,9 @@ class VehicleDocumentData extends DataClass
           other.category == this.category &&
           other.visibleFields == this.visibleFields &&
           other.hiddenContext == this.hiddenContext &&
-          other.requiresAiScan == this.requiresAiScan);
+          other.requiresAiScan == this.requiresAiScan &&
+          other.isDeleted == this.isDeleted &&
+          other.deletedAt == this.deletedAt);
 }
 
 class VehicleDocumentsCompanion extends UpdateCompanion<VehicleDocumentData> {
@@ -592,6 +650,8 @@ class VehicleDocumentsCompanion extends UpdateCompanion<VehicleDocumentData> {
   final Value<String> visibleFields;
   final Value<String?> hiddenContext;
   final Value<bool> requiresAiScan;
+  final Value<bool> isDeleted;
+  final Value<int?> deletedAt;
   final Value<int> rowid;
   const VehicleDocumentsCompanion({
     this.id = const Value.absent(),
@@ -610,6 +670,8 @@ class VehicleDocumentsCompanion extends UpdateCompanion<VehicleDocumentData> {
     this.visibleFields = const Value.absent(),
     this.hiddenContext = const Value.absent(),
     this.requiresAiScan = const Value.absent(),
+    this.isDeleted = const Value.absent(),
+    this.deletedAt = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   VehicleDocumentsCompanion.insert({
@@ -629,6 +691,8 @@ class VehicleDocumentsCompanion extends UpdateCompanion<VehicleDocumentData> {
     this.visibleFields = const Value.absent(),
     this.hiddenContext = const Value.absent(),
     this.requiresAiScan = const Value.absent(),
+    this.isDeleted = const Value.absent(),
+    this.deletedAt = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : id = Value(id),
         documentType = Value(documentType),
@@ -656,6 +720,8 @@ class VehicleDocumentsCompanion extends UpdateCompanion<VehicleDocumentData> {
     Expression<String>? visibleFields,
     Expression<String>? hiddenContext,
     Expression<bool>? requiresAiScan,
+    Expression<bool>? isDeleted,
+    Expression<int>? deletedAt,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -677,6 +743,8 @@ class VehicleDocumentsCompanion extends UpdateCompanion<VehicleDocumentData> {
       if (visibleFields != null) 'visible_fields': visibleFields,
       if (hiddenContext != null) 'hidden_context': hiddenContext,
       if (requiresAiScan != null) 'requires_ai_scan': requiresAiScan,
+      if (isDeleted != null) 'is_deleted': isDeleted,
+      if (deletedAt != null) 'deleted_at': deletedAt,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -698,6 +766,8 @@ class VehicleDocumentsCompanion extends UpdateCompanion<VehicleDocumentData> {
       Value<String>? visibleFields,
       Value<String?>? hiddenContext,
       Value<bool>? requiresAiScan,
+      Value<bool>? isDeleted,
+      Value<int?>? deletedAt,
       Value<int>? rowid}) {
     return VehicleDocumentsCompanion(
       id: id ?? this.id,
@@ -717,6 +787,8 @@ class VehicleDocumentsCompanion extends UpdateCompanion<VehicleDocumentData> {
       visibleFields: visibleFields ?? this.visibleFields,
       hiddenContext: hiddenContext ?? this.hiddenContext,
       requiresAiScan: requiresAiScan ?? this.requiresAiScan,
+      isDeleted: isDeleted ?? this.isDeleted,
+      deletedAt: deletedAt ?? this.deletedAt,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -773,6 +845,12 @@ class VehicleDocumentsCompanion extends UpdateCompanion<VehicleDocumentData> {
     if (requiresAiScan.present) {
       map['requires_ai_scan'] = Variable<bool>(requiresAiScan.value);
     }
+    if (isDeleted.present) {
+      map['is_deleted'] = Variable<bool>(isDeleted.value);
+    }
+    if (deletedAt.present) {
+      map['deleted_at'] = Variable<int>(deletedAt.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -798,6 +876,8 @@ class VehicleDocumentsCompanion extends UpdateCompanion<VehicleDocumentData> {
           ..write('visibleFields: $visibleFields, ')
           ..write('hiddenContext: $hiddenContext, ')
           ..write('requiresAiScan: $requiresAiScan, ')
+          ..write('isDeleted: $isDeleted, ')
+          ..write('deletedAt: $deletedAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -1284,18 +1364,264 @@ class SyncQueueCompanion extends UpdateCompanion<SyncQueueData> {
   }
 }
 
+class $DocumentTombstonesTable extends DocumentTombstones
+    with TableInfo<$DocumentTombstonesTable, DocumentTombstoneData> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $DocumentTombstonesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _documentIdMeta =
+      const VerificationMeta('documentId');
+  @override
+  late final GeneratedColumn<String> documentId = GeneratedColumn<String>(
+      'document_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _driveFileIdMeta =
+      const VerificationMeta('driveFileId');
+  @override
+  late final GeneratedColumn<String> driveFileId = GeneratedColumn<String>(
+      'drive_file_id', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _deletedAtMeta =
+      const VerificationMeta('deletedAt');
+  @override
+  late final GeneratedColumn<int> deletedAt = GeneratedColumn<int>(
+      'deleted_at', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  @override
+  List<GeneratedColumn> get $columns => [documentId, driveFileId, deletedAt];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'document_tombstones';
+  @override
+  VerificationContext validateIntegrity(
+      Insertable<DocumentTombstoneData> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('document_id')) {
+      context.handle(
+          _documentIdMeta,
+          documentId.isAcceptableOrUnknown(
+              data['document_id']!, _documentIdMeta));
+    } else if (isInserting) {
+      context.missing(_documentIdMeta);
+    }
+    if (data.containsKey('drive_file_id')) {
+      context.handle(
+          _driveFileIdMeta,
+          driveFileId.isAcceptableOrUnknown(
+              data['drive_file_id']!, _driveFileIdMeta));
+    }
+    if (data.containsKey('deleted_at')) {
+      context.handle(_deletedAtMeta,
+          deletedAt.isAcceptableOrUnknown(data['deleted_at']!, _deletedAtMeta));
+    } else if (isInserting) {
+      context.missing(_deletedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {documentId};
+  @override
+  DocumentTombstoneData map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return DocumentTombstoneData(
+      documentId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}document_id'])!,
+      driveFileId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}drive_file_id']),
+      deletedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}deleted_at'])!,
+    );
+  }
+
+  @override
+  $DocumentTombstonesTable createAlias(String alias) {
+    return $DocumentTombstonesTable(attachedDatabase, alias);
+  }
+}
+
+class DocumentTombstoneData extends DataClass
+    implements Insertable<DocumentTombstoneData> {
+  final String documentId;
+  final String? driveFileId;
+  final int deletedAt;
+  const DocumentTombstoneData(
+      {required this.documentId, this.driveFileId, required this.deletedAt});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['document_id'] = Variable<String>(documentId);
+    if (!nullToAbsent || driveFileId != null) {
+      map['drive_file_id'] = Variable<String>(driveFileId);
+    }
+    map['deleted_at'] = Variable<int>(deletedAt);
+    return map;
+  }
+
+  DocumentTombstonesCompanion toCompanion(bool nullToAbsent) {
+    return DocumentTombstonesCompanion(
+      documentId: Value(documentId),
+      driveFileId: driveFileId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(driveFileId),
+      deletedAt: Value(deletedAt),
+    );
+  }
+
+  factory DocumentTombstoneData.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return DocumentTombstoneData(
+      documentId: serializer.fromJson<String>(json['documentId']),
+      driveFileId: serializer.fromJson<String?>(json['driveFileId']),
+      deletedAt: serializer.fromJson<int>(json['deletedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'documentId': serializer.toJson<String>(documentId),
+      'driveFileId': serializer.toJson<String?>(driveFileId),
+      'deletedAt': serializer.toJson<int>(deletedAt),
+    };
+  }
+
+  DocumentTombstoneData copyWith(
+          {String? documentId,
+          Value<String?> driveFileId = const Value.absent(),
+          int? deletedAt}) =>
+      DocumentTombstoneData(
+        documentId: documentId ?? this.documentId,
+        driveFileId: driveFileId.present ? driveFileId.value : this.driveFileId,
+        deletedAt: deletedAt ?? this.deletedAt,
+      );
+  DocumentTombstoneData copyWithCompanion(DocumentTombstonesCompanion data) {
+    return DocumentTombstoneData(
+      documentId:
+          data.documentId.present ? data.documentId.value : this.documentId,
+      driveFileId:
+          data.driveFileId.present ? data.driveFileId.value : this.driveFileId,
+      deletedAt: data.deletedAt.present ? data.deletedAt.value : this.deletedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DocumentTombstoneData(')
+          ..write('documentId: $documentId, ')
+          ..write('driveFileId: $driveFileId, ')
+          ..write('deletedAt: $deletedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(documentId, driveFileId, deletedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is DocumentTombstoneData &&
+          other.documentId == this.documentId &&
+          other.driveFileId == this.driveFileId &&
+          other.deletedAt == this.deletedAt);
+}
+
+class DocumentTombstonesCompanion
+    extends UpdateCompanion<DocumentTombstoneData> {
+  final Value<String> documentId;
+  final Value<String?> driveFileId;
+  final Value<int> deletedAt;
+  final Value<int> rowid;
+  const DocumentTombstonesCompanion({
+    this.documentId = const Value.absent(),
+    this.driveFileId = const Value.absent(),
+    this.deletedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  DocumentTombstonesCompanion.insert({
+    required String documentId,
+    this.driveFileId = const Value.absent(),
+    required int deletedAt,
+    this.rowid = const Value.absent(),
+  })  : documentId = Value(documentId),
+        deletedAt = Value(deletedAt);
+  static Insertable<DocumentTombstoneData> custom({
+    Expression<String>? documentId,
+    Expression<String>? driveFileId,
+    Expression<int>? deletedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (documentId != null) 'document_id': documentId,
+      if (driveFileId != null) 'drive_file_id': driveFileId,
+      if (deletedAt != null) 'deleted_at': deletedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  DocumentTombstonesCompanion copyWith(
+      {Value<String>? documentId,
+      Value<String?>? driveFileId,
+      Value<int>? deletedAt,
+      Value<int>? rowid}) {
+    return DocumentTombstonesCompanion(
+      documentId: documentId ?? this.documentId,
+      driveFileId: driveFileId ?? this.driveFileId,
+      deletedAt: deletedAt ?? this.deletedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (documentId.present) {
+      map['document_id'] = Variable<String>(documentId.value);
+    }
+    if (driveFileId.present) {
+      map['drive_file_id'] = Variable<String>(driveFileId.value);
+    }
+    if (deletedAt.present) {
+      map['deleted_at'] = Variable<int>(deletedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DocumentTombstonesCompanion(')
+          ..write('documentId: $documentId, ')
+          ..write('driveFileId: $driveFileId, ')
+          ..write('deletedAt: $deletedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
   late final $VehicleDocumentsTable vehicleDocuments =
       $VehicleDocumentsTable(this);
   late final $SyncQueueTable syncQueue = $SyncQueueTable(this);
+  late final $DocumentTombstonesTable documentTombstones =
+      $DocumentTombstonesTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
   @override
   List<DatabaseSchemaEntity> get allSchemaEntities =>
-      [vehicleDocuments, syncQueue];
+      [vehicleDocuments, syncQueue, documentTombstones];
 }
 
 typedef $$VehicleDocumentsTableCreateCompanionBuilder
@@ -1316,6 +1642,8 @@ typedef $$VehicleDocumentsTableCreateCompanionBuilder
   Value<String> visibleFields,
   Value<String?> hiddenContext,
   Value<bool> requiresAiScan,
+  Value<bool> isDeleted,
+  Value<int?> deletedAt,
   Value<int> rowid,
 });
 typedef $$VehicleDocumentsTableUpdateCompanionBuilder
@@ -1336,6 +1664,8 @@ typedef $$VehicleDocumentsTableUpdateCompanionBuilder
   Value<String> visibleFields,
   Value<String?> hiddenContext,
   Value<bool> requiresAiScan,
+  Value<bool> isDeleted,
+  Value<int?> deletedAt,
   Value<int> rowid,
 });
 
@@ -1398,6 +1728,12 @@ class $$VehicleDocumentsTableFilterComposer
   ColumnFilters<bool> get requiresAiScan => $composableBuilder(
       column: $table.requiresAiScan,
       builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get isDeleted => $composableBuilder(
+      column: $table.isDeleted, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get deletedAt => $composableBuilder(
+      column: $table.deletedAt, builder: (column) => ColumnFilters(column));
 }
 
 class $$VehicleDocumentsTableOrderingComposer
@@ -1464,6 +1800,12 @@ class $$VehicleDocumentsTableOrderingComposer
   ColumnOrderings<bool> get requiresAiScan => $composableBuilder(
       column: $table.requiresAiScan,
       builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get isDeleted => $composableBuilder(
+      column: $table.isDeleted, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get deletedAt => $composableBuilder(
+      column: $table.deletedAt, builder: (column) => ColumnOrderings(column));
 }
 
 class $$VehicleDocumentsTableAnnotationComposer
@@ -1522,6 +1864,12 @@ class $$VehicleDocumentsTableAnnotationComposer
 
   GeneratedColumn<bool> get requiresAiScan => $composableBuilder(
       column: $table.requiresAiScan, builder: (column) => column);
+
+  GeneratedColumn<bool> get isDeleted =>
+      $composableBuilder(column: $table.isDeleted, builder: (column) => column);
+
+  GeneratedColumn<int> get deletedAt =>
+      $composableBuilder(column: $table.deletedAt, builder: (column) => column);
 }
 
 class $$VehicleDocumentsTableTableManager extends RootTableManager<
@@ -1567,6 +1915,8 @@ class $$VehicleDocumentsTableTableManager extends RootTableManager<
             Value<String> visibleFields = const Value.absent(),
             Value<String?> hiddenContext = const Value.absent(),
             Value<bool> requiresAiScan = const Value.absent(),
+            Value<bool> isDeleted = const Value.absent(),
+            Value<int?> deletedAt = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               VehicleDocumentsCompanion(
@@ -1586,6 +1936,8 @@ class $$VehicleDocumentsTableTableManager extends RootTableManager<
             visibleFields: visibleFields,
             hiddenContext: hiddenContext,
             requiresAiScan: requiresAiScan,
+            isDeleted: isDeleted,
+            deletedAt: deletedAt,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -1605,6 +1957,8 @@ class $$VehicleDocumentsTableTableManager extends RootTableManager<
             Value<String> visibleFields = const Value.absent(),
             Value<String?> hiddenContext = const Value.absent(),
             Value<bool> requiresAiScan = const Value.absent(),
+            Value<bool> isDeleted = const Value.absent(),
+            Value<int?> deletedAt = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               VehicleDocumentsCompanion.insert(
@@ -1624,6 +1978,8 @@ class $$VehicleDocumentsTableTableManager extends RootTableManager<
             visibleFields: visibleFields,
             hiddenContext: hiddenContext,
             requiresAiScan: requiresAiScan,
+            isDeleted: isDeleted,
+            deletedAt: deletedAt,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
@@ -1874,6 +2230,153 @@ typedef $$SyncQueueTableProcessedTableManager = ProcessedTableManager<
     ),
     SyncQueueData,
     PrefetchHooks Function()>;
+typedef $$DocumentTombstonesTableCreateCompanionBuilder
+    = DocumentTombstonesCompanion Function({
+  required String documentId,
+  Value<String?> driveFileId,
+  required int deletedAt,
+  Value<int> rowid,
+});
+typedef $$DocumentTombstonesTableUpdateCompanionBuilder
+    = DocumentTombstonesCompanion Function({
+  Value<String> documentId,
+  Value<String?> driveFileId,
+  Value<int> deletedAt,
+  Value<int> rowid,
+});
+
+class $$DocumentTombstonesTableFilterComposer
+    extends Composer<_$AppDatabase, $DocumentTombstonesTable> {
+  $$DocumentTombstonesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get documentId => $composableBuilder(
+      column: $table.documentId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get driveFileId => $composableBuilder(
+      column: $table.driveFileId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get deletedAt => $composableBuilder(
+      column: $table.deletedAt, builder: (column) => ColumnFilters(column));
+}
+
+class $$DocumentTombstonesTableOrderingComposer
+    extends Composer<_$AppDatabase, $DocumentTombstonesTable> {
+  $$DocumentTombstonesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get documentId => $composableBuilder(
+      column: $table.documentId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get driveFileId => $composableBuilder(
+      column: $table.driveFileId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get deletedAt => $composableBuilder(
+      column: $table.deletedAt, builder: (column) => ColumnOrderings(column));
+}
+
+class $$DocumentTombstonesTableAnnotationComposer
+    extends Composer<_$AppDatabase, $DocumentTombstonesTable> {
+  $$DocumentTombstonesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get documentId => $composableBuilder(
+      column: $table.documentId, builder: (column) => column);
+
+  GeneratedColumn<String> get driveFileId => $composableBuilder(
+      column: $table.driveFileId, builder: (column) => column);
+
+  GeneratedColumn<int> get deletedAt =>
+      $composableBuilder(column: $table.deletedAt, builder: (column) => column);
+}
+
+class $$DocumentTombstonesTableTableManager extends RootTableManager<
+    _$AppDatabase,
+    $DocumentTombstonesTable,
+    DocumentTombstoneData,
+    $$DocumentTombstonesTableFilterComposer,
+    $$DocumentTombstonesTableOrderingComposer,
+    $$DocumentTombstonesTableAnnotationComposer,
+    $$DocumentTombstonesTableCreateCompanionBuilder,
+    $$DocumentTombstonesTableUpdateCompanionBuilder,
+    (
+      DocumentTombstoneData,
+      BaseReferences<_$AppDatabase, $DocumentTombstonesTable,
+          DocumentTombstoneData>
+    ),
+    DocumentTombstoneData,
+    PrefetchHooks Function()> {
+  $$DocumentTombstonesTableTableManager(
+      _$AppDatabase db, $DocumentTombstonesTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$DocumentTombstonesTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$DocumentTombstonesTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$DocumentTombstonesTableAnnotationComposer(
+                  $db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> documentId = const Value.absent(),
+            Value<String?> driveFileId = const Value.absent(),
+            Value<int> deletedAt = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              DocumentTombstonesCompanion(
+            documentId: documentId,
+            driveFileId: driveFileId,
+            deletedAt: deletedAt,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String documentId,
+            Value<String?> driveFileId = const Value.absent(),
+            required int deletedAt,
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              DocumentTombstonesCompanion.insert(
+            documentId: documentId,
+            driveFileId: driveFileId,
+            deletedAt: deletedAt,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$DocumentTombstonesTableProcessedTableManager = ProcessedTableManager<
+    _$AppDatabase,
+    $DocumentTombstonesTable,
+    DocumentTombstoneData,
+    $$DocumentTombstonesTableFilterComposer,
+    $$DocumentTombstonesTableOrderingComposer,
+    $$DocumentTombstonesTableAnnotationComposer,
+    $$DocumentTombstonesTableCreateCompanionBuilder,
+    $$DocumentTombstonesTableUpdateCompanionBuilder,
+    (
+      DocumentTombstoneData,
+      BaseReferences<_$AppDatabase, $DocumentTombstonesTable,
+          DocumentTombstoneData>
+    ),
+    DocumentTombstoneData,
+    PrefetchHooks Function()>;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -1882,4 +2385,6 @@ class $AppDatabaseManager {
       $$VehicleDocumentsTableTableManager(_db, _db.vehicleDocuments);
   $$SyncQueueTableTableManager get syncQueue =>
       $$SyncQueueTableTableManager(_db, _db.syncQueue);
+  $$DocumentTombstonesTableTableManager get documentTombstones =>
+      $$DocumentTombstonesTableTableManager(_db, _db.documentTombstones);
 }

@@ -10,6 +10,7 @@ import '../controllers/document_providers.dart';
 import '../utils/document_action_helper.dart';
 import '../widgets/cloud_sync_settings_card.dart';
 import '../widgets/import_document_metadata_sheet.dart';
+import '../widgets/pending_ai_scan_badge.dart';
 import 'document_viewer_screen.dart';
 import 'login_screen.dart';
 
@@ -631,6 +632,11 @@ class _DocumentListScreenState extends ConsumerState<DocumentListScreen>
                         Colors.white.withValues(alpha: 0.1),
                         Colors.white70,
                       ),
+                      if (doc.requiresAiScan)
+                        PendingAiScanBadge(
+                          documentId: doc.id,
+                          isDark: true,
+                        ),
                       if (doc.expiryDate != null)
                         _buildMiniBadge(
                           isExpired ? 'EXPIRED' : 'Expires in ${_daysRemaining(doc.expiryDate!)}d',

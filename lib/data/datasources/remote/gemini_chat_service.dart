@@ -43,10 +43,11 @@ class GeminiChatService {
 
   bool get isConfigured => apiKey != null && apiKey!.trim().isNotEmpty;
 
-  /// Ask a natural language question against the user's document vault.
+  /// Ask a natural language question against the user's document vault or a specific document.
   Future<ChatAnswer> ask({
     required String question,
     required List<VehicleDocument> documents,
+    VehicleDocument? targetDocument,
   }) async {
     final key = apiKey?.trim();
     if (key == null || key.isEmpty) {
@@ -55,17 +56,45 @@ class GeminiChatService {
       );
     }
 
-    if (documents.isEmpty) {
+    if (targetDocument == null && documents.isEmpty) {
       return ChatAnswer.error(
         'Your vault is empty. Import some documents first, then ask me anything about them!',
       );
     }
 
-    // Build a compact document context
-    final docsContext = _buildDocumentContext(documents);
+    final String prompt;
+    if (targetDocument != null) {
+      final doc = targetDocument;
+      final visibleFieldsStr = doc.visibleFields.isNotEmpty
+          ? jsonEncode(doc.visibleFields)
+          : '{}';
+      final hiddenCtxStr = (doc.hiddenContext != null && doc.hiddenContext!.trim().isNotEmpty)
+          ? doc.hiddenContext!.trim()
+          : 'None';
 
-    final prompt = '''
-You are a smart personal document assistant. The user has the following documents in their secure vault:
+      prompt = '''
+You are an AI assistant for a secure document vault. The user is asking about a document titled '${doc.title}'. Category: '${doc.category}'. Extracted Fields: $visibleFieldsStr. Deep Context (Serial numbers, warranties, fine print, MAC addresses, etc.): $hiddenCtxStr. Base your answers entirely on this provided context.
+
+User question: "$question"
+
+Instructions:
+- Base your answers entirely on the provided document context.
+- If you find specific values (like ID numbers, serial numbers, policy numbers, expiry dates, fine print details), state them clearly and directly.
+- Be concise, accurate, and helpful.
+- If the requested information is not present in the document or context, say so clearly.
+
+Respond ONLY with this exact JSON (no markdown, no extra text):
+{
+  "answer": "your natural language answer here",
+  "relevantDocumentIds": ["${doc.id}"],
+  "found": true
+}
+''';
+    } else {
+      // Build vault-wide document context
+      final docsContext = _buildDocumentContext(documents);
+      prompt = '''
+You are an AI assistant for a secure document vault. The user has the following documents in their secure vault:
 
 --- DOCUMENTS START ---
 $docsContext
@@ -75,7 +104,8 @@ User question: "$question"
 
 Instructions:
 - Search through the documents above to answer the user's question accurately.
-- If you find specific values (like ID numbers, TIN numbers, policy numbers, expiry dates), state them clearly.
+- Use the extracted fields and deep context (serial numbers, warranties, fine print, MAC addresses, etc.) for each document. Base your answers entirely on this provided context.
+- If you find specific values (like ID numbers, serial numbers, TIN numbers, policy numbers, expiry dates, fine print details), state them clearly.
 - Mention which document you found the information in.
 - Be concise and helpful.
 - If you cannot find relevant information in any document, say so clearly.
@@ -88,6 +118,7 @@ Respond ONLY with this exact JSON (no markdown, no extra text):
   "found": true
 }
 ''';
+    }
 
     final models = await _getModels(key);
 
@@ -131,18 +162,17 @@ Respond ONLY with this exact JSON (no markdown, no extra text):
     final buf = StringBuffer();
     for (final doc in docs) {
       buf.writeln('---');
-      buf.writeln('ID: ${doc.id}');
+      buf.writeln('Document ID: ${doc.id}');
       buf.writeln('Title: ${doc.title}');
-      buf.writeln('Type: ${doc.documentType.label}');
-      if (doc.vehicleRegNo.isNotEmpty && doc.vehicleRegNo != 'General') {
-        buf.writeln('Reference/Vehicle No: ${doc.vehicleRegNo}');
-      }
-      if (doc.policyNo != null && doc.policyNo!.isNotEmpty) {
-        buf.writeln('Policy/Ref No: ${doc.policyNo}');
-      }
+      buf.writeln('Category: ${doc.category}');
       if (doc.expiryDate != null) {
-        buf.writeln(
-            'Expiry Date: ${doc.expiryDate!.toIso8601String().split('T').first}');
+        buf.writeln('Expiry Date: ${doc.expiryDate!.toIso8601String().split('T').first}');
+      }
+      if (doc.visibleFields.isNotEmpty) {
+        buf.writeln('Extracted Fields: ${jsonEncode(doc.visibleFields)}');
+      }
+      if (doc.hiddenContext != null && doc.hiddenContext!.trim().isNotEmpty) {
+        buf.writeln('Deep Context (Serial numbers, warranties, fine print, MAC addresses, etc.): ${doc.hiddenContext!.trim()}');
       }
     }
     return buf.toString();
@@ -165,7 +195,9 @@ Respond ONLY with this exact JSON (no markdown, no extra text):
     }
 
     const stableModels = [
+      'gemini-2.5-flash',
       'gemini-flash-lite-latest',
+      'gemini-2.0-flash',
       'gemini-3.1-flash-lite',
       'gemini-3.8-flash',
       'gemini-3-flash-preview',

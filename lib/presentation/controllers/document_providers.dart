@@ -76,6 +76,12 @@ final vehicleDocumentsStreamProvider = StreamProvider<List<VehicleDocument>>((re
   return repository.watchAllDocuments();
 });
 
+// Reactive Recycle Bin Stream
+final recycleBinDocumentsStreamProvider = StreamProvider<List<VehicleDocument>>((ref) {
+  final repository = ref.watch(vehicleDocumentRepositoryProvider);
+  return repository.watchRecycleBinDocuments();
+});
+
 // Reactive Sync Engine State Stream
 final syncEngineStateProvider = StreamProvider<SyncEngineState>((ref) {
   final syncQueue = ref.watch(syncQueueRepositoryProvider);

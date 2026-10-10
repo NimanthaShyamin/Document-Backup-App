@@ -92,13 +92,17 @@ class LocalNotificationEngine {
 
   /// Cancels all scheduled alerts for a specific document ID.
   Future<void> cancelDocumentAlerts(String documentId) async {
-    await initialize();
-    final alertDays = [30, 7, 1];
-    for (final days in alertDays) {
-      final notificationId = _generateNotificationId(documentId, days);
-      await _notifications.cancel(notificationId);
+    try {
+      await initialize();
+      final alertDays = [30, 7, 1];
+      for (final days in alertDays) {
+        final notificationId = _generateNotificationId(documentId, days);
+        await _notifications.cancel(notificationId);
+      }
+      developer.log('Cancelled scheduled expiry alerts for document $documentId');
+    } catch (e) {
+      developer.log('Could not cancel notifications for $documentId: $e');
     }
-    developer.log('Cancelled scheduled expiry alerts for document $documentId');
   }
 
   int _generateNotificationId(String documentId, int days) {

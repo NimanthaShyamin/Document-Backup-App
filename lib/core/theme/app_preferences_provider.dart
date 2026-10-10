@@ -242,5 +242,42 @@ final geminiApiKeyProvider = StateNotifierProvider<GeminiApiKeyNotifier, String>
   return GeminiApiKeyNotifier(prefs);
 });
 
+// Key for Recycle Bin Retention Period in days (Default 30 days)
+const String _keyRecycleBinRetentionDays = 'pref_recycle_bin_retention_days';
+
+class RecycleBinRetentionDaysNotifier extends StateNotifier<int> {
+  final SharedPreferences? _prefs;
+
+  RecycleBinRetentionDaysNotifier([this._prefs])
+      : super(_prefs?.getInt(_keyRecycleBinRetentionDays) ?? 30) {
+    if (_prefs == null) _loadFromPrefs();
+  }
+
+  Future<void> _loadFromPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final days = prefs.getInt(_keyRecycleBinRetentionDays);
+      if (days != null && days > 0) {
+        state = days;
+      }
+    } catch (_) {}
+  }
+
+  Future<void> setDays(int days) async {
+    if (days <= 0) return;
+    state = days;
+    try {
+      final prefs = _prefs ?? await SharedPreferences.getInstance();
+      await prefs.setInt(_keyRecycleBinRetentionDays, days);
+    } catch (_) {}
+  }
+}
+
+final recycleBinRetentionDaysProvider =
+    StateNotifierProvider<RecycleBinRetentionDaysNotifier, int>((ref) {
+  final prefs = ref.watch(sharedPreferencesProvider);
+  return RecycleBinRetentionDaysNotifier(prefs);
+});
+
 /// Transient provider controlling search bar visibility (triggered by dock swipe-down).
 final searchVisibleProvider = StateProvider<bool>((ref) => false);

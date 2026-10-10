@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:developer' as developer;
 import 'dart:io';
-import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sign_in_as_googleapis_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -23,7 +22,14 @@ class DynamicAuthHttpClient extends http.BaseClient {
     try {
       final headers = await _account.authHeaders;
       request.headers.addAll(headers);
-      return await _innerClient.send(request);
+      final response = await _innerClient.send(request);
+      if (response.statusCode == 401) {
+        developer.log('[DynamicAuthHttpClient] Received 401. Clearing client-side auth cache...');
+        try {
+          await _account.clearAuthCache();
+        } catch (_) {}
+      }
+      return response;
     } catch (e, stack) {
       developer.log('Failed to inject auth headers or execute request', error: e, stackTrace: stack);
       throw DriveAuthException('Authentication header acquisition failed: $e', e);
@@ -85,6 +91,9 @@ class GoogleAuthService {
   Future<GoogleSignInAccount?> signInSilently({bool reAuthenticate = false}) async {
     try {
       developer.log('Attempting Google silent sign-in...');
+      if (reAuthenticate) {
+        clearCachedApi();
+      }
       final account = await _googleSignIn.signInSilently(reAuthenticate: reAuthenticate);
       _cachedAccount = account;
       if (account != null) {
@@ -197,17 +206,7 @@ class GoogleAuthService {
   Future<http.Client> getAuthenticatedClient({bool promptIfUnauthenticated = true}) async {
     final account = await ensureSignedIn(promptIfUnauthenticated: promptIfUnauthenticated);
 
-    try {
-      // 1. Attempt official googleapis extension client
-      final authClient = await _googleSignIn.authenticatedClient();
-      if (authClient != null) {
-        return authClient;
-      }
-    } catch (e) {
-      developer.log('googleapis extension client unavailable, falling back to DynamicAuthHttpClient: $e');
-    }
-
-    // 2. Dynamic client with on-demand token refresh
+    // Use DynamicAuthHttpClient directly to ensure automatic token refresh and 401 auth cache invalidation
     return DynamicAuthHttpClient(account);
   }
 
@@ -220,6 +219,19 @@ class GoogleAuthService {
     final client = await getAuthenticatedClient(promptIfUnauthenticated: promptIfUnauthenticated);
     _cachedDriveApi = drive.DriveApi(client);
     return _cachedDriveApi!;
+  }
+
+  /// Clears cached DriveApi instance and client-side Google token cache to force refreshing authenticated client on token expiration.
+  Future<void> clearCachedApi() async {
+    _cachedDriveApi = null;
+    try {
+      final account = currentUser;
+      if (account != null) {
+        await account.clearAuthCache();
+      }
+    } catch (e) {
+      developer.log('[GoogleAuthService] Notice: clearAuthCache failed: $e');
+    }
   }
 
   /// Signs the user out of the application and clears cached API instances.

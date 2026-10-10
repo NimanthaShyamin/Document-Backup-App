@@ -41,13 +41,31 @@ class VehicleDocumentRepositoryImpl implements IVehicleDocumentRepository {
   @override
   Stream<List<VehicleDocument>> watchAllDocuments() {
     return (_db.select(_db.vehicleDocuments)
-          ..where((t) => t.vehicleRegNo.isNotValue('VERIFY-E2E'))
+          ..where((t) => t.vehicleRegNo.isNotValue('VERIFY-E2E') & t.isDeleted.equals(false))
           ..orderBy([
             (t) => OrderingTerm(expression: t.createdAt, mode: OrderingMode.desc),
           ]))
         .watch()
         .map((rows) => rows
             .where((r) =>
+                !r.isDeleted &&
+                !r.vehicleRegNo.startsWith('VERIFY-') &&
+                !r.title.toLowerCase().contains('probe'))
+            .map(_mapToDomain)
+            .toList());
+  }
+
+  @override
+  Stream<List<VehicleDocument>> watchRecycleBinDocuments() {
+    return (_db.select(_db.vehicleDocuments)
+          ..where((t) => t.isDeleted.equals(true))
+          ..orderBy([
+            (t) => OrderingTerm(expression: t.deletedAt, mode: OrderingMode.desc),
+          ]))
+        .watch()
+        .map((rows) => rows
+            .where((r) =>
+                r.isDeleted &&
                 !r.vehicleRegNo.startsWith('VERIFY-') &&
                 !r.title.toLowerCase().contains('probe'))
             .map(_mapToDomain)
@@ -124,6 +142,8 @@ class VehicleDocumentRepositoryImpl implements IVehicleDocumentRepository {
       visibleFields: Value(jsonEncode(mergedFields)),
       hiddenContext: Value(hiddenContext),
       requiresAiScan: Value(requiresAiScan),
+      isDeleted: const Value(false),
+      deletedAt: const Value(null),
     );
 
     await _db.into(_db.vehicleDocuments).insertOnConflictUpdate(companion);
@@ -150,20 +170,91 @@ class VehicleDocumentRepositoryImpl implements IVehicleDocumentRepository {
   }
 
   @override
-  Future<void> deleteDocument(String id) async {
+  Future<void> deleteDocument(String id) => moveToRecycleBin(id);
+
+  @override
+  Future<void> moveToRecycleBin(String id) async {
     final doc = await getDocumentById(id);
     if (doc != null) {
-      // Cancel local notifications
       await _notificationEngine.cancelDocumentAlerts(id);
+      final now = DateTime.now().millisecondsSinceEpoch;
+      await (_db.update(_db.vehicleDocuments)..where((t) => t.id.equals(id))).write(
+        VehicleDocumentsCompanion(
+          isDeleted: const Value(true),
+          deletedAt: Value(now),
+          lastModifiedTimestamp: Value(now),
+        ),
+      );
+    }
+  }
 
-      // Delete physical sandboxed folder
-      await _storageManager.deleteDocumentFolder(id);
+  @override
+  Future<void> restoreFromRecycleBin(String id) async {
+    final row = await (_db.select(_db.vehicleDocuments)..where((t) => t.id.equals(id))).getSingleOrNull();
+    if (row != null) {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      await (_db.update(_db.vehicleDocuments)..where((t) => t.id.equals(id))).write(
+        VehicleDocumentsCompanion(
+          isDeleted: const Value(false),
+          deletedAt: const Value(null),
+          lastModifiedTimestamp: Value(now),
+        ),
+      );
+      if (row.expiryDate != null) {
+        try {
+          await _notificationEngine.scheduleExpiryAlerts(
+            documentId: row.id,
+            title: row.title,
+            vehicleRegNo: row.vehicleRegNo,
+            expiryDate: DateTime.fromMillisecondsSinceEpoch(row.expiryDate!),
+          );
+        } catch (_) {}
+      }
+    }
+  }
 
-      // Queue remote cloud deletion
-      await _syncQueue.enqueueDelete(id, doc.driveFileId);
+  @override
+  Future<void> permanentlyDeleteDocument(String id) async {
+    final row = await (_db.select(_db.vehicleDocuments)..where((t) => t.id.equals(id))).getSingleOrNull();
+    final driveId = row?.driveFileId;
 
-      // Delete local database record
-      await (_db.delete(_db.vehicleDocuments)..where((t) => t.id.equals(id))).go();
+    // Cancel local notifications & delete physical files
+    await _notificationEngine.cancelDocumentAlerts(id);
+    await _storageManager.deleteDocumentFolder(id);
+
+    // Save tombstone to permanently block cloud sync resurrection
+    await _db.into(_db.documentTombstones).insertOnConflictUpdate(
+          DocumentTombstonesCompanion.insert(
+            documentId: id,
+            driveFileId: Value(driveId),
+            deletedAt: DateTime.now().millisecondsSinceEpoch,
+          ),
+        );
+
+    // Enqueue cloud deletion
+    await _syncQueue.enqueueDelete(id, driveId);
+
+    // Delete local database record
+    await (_db.delete(_db.vehicleDocuments)..where((t) => t.id.equals(id))).go();
+  }
+
+  @override
+  Future<void> emptyRecycleBin() async {
+    final recycled = await (_db.select(_db.vehicleDocuments)..where((t) => t.isDeleted.equals(true))).get();
+    for (final doc in recycled) {
+      await permanentlyDeleteDocument(doc.id);
+    }
+  }
+
+  @override
+  Future<void> autoCleanupRecycleBin(int retentionDays) async {
+    if (retentionDays <= 0) return;
+    final cutoff = DateTime.now().subtract(Duration(days: retentionDays)).millisecondsSinceEpoch;
+    final expired = await (_db.select(_db.vehicleDocuments)
+          ..where((t) => t.isDeleted.equals(true) & t.deletedAt.isSmallerOrEqualValue(cutoff)))
+        .get();
+    for (final doc in expired) {
+      await permanentlyDeleteDocument(doc.id);
     }
   }
 
@@ -192,6 +283,8 @@ class VehicleDocumentRepositoryImpl implements IVehicleDocumentRepository {
       visibleFields: decodedFields,
       hiddenContext: data.hiddenContext,
       requiresAiScan: data.requiresAiScan,
+      isDeleted: data.isDeleted,
+      deletedAt: data.deletedAt != null ? DateTime.fromMillisecondsSinceEpoch(data.deletedAt!) : null,
     );
   }
 }

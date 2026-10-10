@@ -4,9 +4,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../../core/hardware/brightness_controller.dart';
+import '../../domain/entities/document_category.dart';
 import '../../domain/entities/document_type.dart';
 import '../../domain/entities/vehicle_document.dart';
 import '../utils/document_action_helper.dart';
+import '../widgets/pending_ai_scan_badge.dart';
+import 'ai_chat_sheet.dart';
 
 /// Enterprise-grade universal document viewer with automated screen luminance elevation.
 /// Supports multi-page PDFs, rasterized certificates (PNG/JPG/WEBP), and vector QR codes.
@@ -152,7 +155,7 @@ class _DocumentViewerScreenState extends ConsumerState<DocumentViewerScreen> {
                       overflow: TextOverflow.ellipsis,
                     ),
                     Text(
-                      '${widget.document.vehicleRegNo} • ${_formatDocType(widget.document.documentType)}',
+                      DocumentCategory.resolve(widget.document.category).name,
                       style: TextStyle(
                         fontSize: 12,
                         color: Colors.white.withValues(alpha: 0.7),
@@ -161,6 +164,11 @@ class _DocumentViewerScreenState extends ConsumerState<DocumentViewerScreen> {
                   ],
                 ),
                 actions: [
+                  IconButton(
+                    tooltip: 'Ask AI Assistant',
+                    icon: const Icon(Icons.auto_awesome_rounded, color: Colors.amberAccent),
+                    onPressed: () => AiChatSheet.show(context, targetDocument: widget.document),
+                  ),
                   IconButton(
                     tooltip: 'Full Screen',
                     icon: const Icon(Icons.fullscreen, color: Colors.white),
@@ -369,16 +377,17 @@ class _DocumentViewerScreenState extends ConsumerState<DocumentViewerScreen> {
             ),
             const SizedBox(height: 16),
             Text(
-              widget.document.vehicleRegNo,
+              widget.document.title.isNotEmpty ? widget.document.title : widget.document.vehicleRegNo,
+              textAlign: TextAlign.center,
               style: const TextStyle(
-                fontSize: 20,
+                fontSize: 18,
                 fontWeight: FontWeight.w900,
-                letterSpacing: 2.0,
+                letterSpacing: 1.5,
                 color: Colors.black87,
               ),
             ),
             Text(
-              'QUICK FUEL PASS VALIDATED',
+              'VALIDATED SECURE QR PASS',
               style: TextStyle(
                 fontSize: 10,
                 fontWeight: FontWeight.bold,
@@ -411,7 +420,7 @@ class _DocumentViewerScreenState extends ConsumerState<DocumentViewerScreen> {
 
     if (_pdfLoadError != null) {
       return Center(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(24.0),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -538,8 +547,14 @@ class _DocumentViewerScreenState extends ConsumerState<DocumentViewerScreen> {
   }
 
   Widget _buildMetadataOverlay(BuildContext context) {
-    final expiry = widget.document.expiryDate;
+    final doc = widget.document;
+    final category = DocumentCategory.resolve(doc.category);
+    final expiry = doc.expiryDate;
     final isExpired = expiry != null && expiry.isBefore(DateTime.now());
+
+    final validFields = doc.visibleFields.entries
+        .where((e) => e.value != null && e.value.toString().trim().isNotEmpty)
+        .toList();
 
     return Container(
       margin: const EdgeInsets.all(16),
@@ -560,57 +575,191 @@ class _DocumentViewerScreenState extends ConsumerState<DocumentViewerScreen> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Header: Category Icon + Title + Badges
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Text(
-                widget.document.vehicleRegNo,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 1.1,
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(category.icon, color: Colors.amberAccent, size: 20),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      doc.title.isNotEmpty ? doc.title : category.name,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      category.name,
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.6),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
                 ),
               ),
+              const SizedBox(width: 8),
+              if (doc.requiresAiScan) _buildPendingAiScanBadge(),
               _buildExpiryBadge(isExpired, expiry),
             ],
           ),
-          const SizedBox(height: 8),
-          if (widget.document.policyNo != null)
-            Text(
-              'Ref/Policy: ${widget.document.policyNo}',
-              style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.8), fontSize: 13),
+
+          // Dynamic visible fields (if any extracted)
+          if (validFields.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 120),
+              child: SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: validFields.map((entry) {
+                    return _buildFieldTile(entry.key, entry.value);
+                  }).toList(),
+                ),
+              ),
             ),
-          const SizedBox(height: 6),
+          ],
+
+          const SizedBox(height: 12),
+
+          // Footer: Sync status + Ask AI button + Checksum
           Row(
             children: [
               Icon(
-                widget.document.syncStatus.icon,
+                doc.syncStatus.icon,
                 size: 14,
-                color: widget.document.syncStatus.color,
+                color: doc.syncStatus.color,
               ),
               const SizedBox(width: 6),
-              Text(
-                'Cloud: ${widget.document.syncStatus.label}',
-                style: TextStyle(
-                  color: widget.document.syncStatus.color,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
+              Flexible(
+                child: Text(
+                  'Cloud: ${doc.syncStatus.label}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: doc.syncStatus.color,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ),
-              const Spacer(),
+              const SizedBox(width: 8),
+              InkWell(
+                onTap: () => AiChatSheet.show(context, targetDocument: doc),
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.blueAccent.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.blueAccent.withValues(alpha: 0.4)),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.auto_awesome, color: Colors.blueAccent, size: 12),
+                      SizedBox(width: 4),
+                      Text(
+                        'Ask AI',
+                        style: TextStyle(
+                          color: Colors.blueAccent,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
               Text(
-                'SHA-256: ${widget.document.fileChecksumSha256.substring(0, 8)}...',
+                'SHA-256: ${doc.fileChecksumSha256.length >= 8 ? doc.fileChecksumSha256.substring(0, 8) : doc.fileChecksumSha256}...',
                 style: TextStyle(
                   color: Colors.white.withValues(alpha: 0.4),
-                  fontSize: 11,
+                  fontSize: 10,
                   fontFamily: 'monospace',
                 ),
               ),
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildFieldTile(String label, dynamic value) {
+    final displayValue = value?.toString().trim() ?? '';
+    if (displayValue.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            _formatLabel(label),
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.6),
+              fontSize: 10,
+              fontWeight: FontWeight.w500,
+              letterSpacing: 0.3,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            displayValue,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatLabel(String key) {
+    if (key.trim().isEmpty) return '';
+    final cleaned = key.replaceAll(RegExp(r'[_\-]'), ' ').trim();
+    return cleaned.split(' ').map((word) {
+      if (word.isEmpty) return '';
+      return '${word[0].toUpperCase()}${word.substring(1)}';
+    }).join(' ');
+  }
+
+  Widget _buildPendingAiScanBadge() {
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: PendingAiScanBadge(
+        documentId: widget.document.id,
+        isDark: true,
       ),
     );
   }
@@ -657,26 +806,4 @@ class _DocumentViewerScreenState extends ConsumerState<DocumentViewerScreen> {
     return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
   }
 
-  String _formatDocType(DocumentType type) {
-    switch (type) {
-      case DocumentType.fuelQr:
-        return 'National Fuel Pass';
-      case DocumentType.insuranceCard:
-        return 'Motor Insurance Certificate';
-      case DocumentType.revenueLicense:
-        return 'Annual Revenue License';
-      case DocumentType.idCard:
-        return 'National ID / Passport';
-      case DocumentType.drivingLicense:
-        return 'Driving License';
-      case DocumentType.eTicket:
-        return 'E-Ticket / Booking';
-      case DocumentType.bill:
-        return 'Invoice / Bill';
-      case DocumentType.certificate:
-        return 'Certificate / Medical';
-      case DocumentType.custom:
-        return 'General Document';
-    }
-  }
 }

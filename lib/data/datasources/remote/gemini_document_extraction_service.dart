@@ -95,14 +95,9 @@ class GeminiDocumentExtractionService {
   /// Verified multimodal vision models that reliably support images and PDFs on current Gemini API.
   static const List<String> _verifiedVisionModels = [
     'gemini-2.5-flash',
-    'gemini-flash-lite-latest',
     'gemini-2.0-flash',
-    'gemini-3.1-flash-lite',
-    'gemini-3.5-flash-lite',
-    'gemini-flash-latest',
-    'gemini-3.6-flash',
-    'gemini-3.8-flash',
-    'gemini-3-flash-preview',
+    'gemini-1.5-flash',
+    'gemini-1.5-pro',
   ];
 
   /// Checks if a model is non-vision (e.g. TTS, audio-only, embedding).
@@ -206,105 +201,118 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
 }
 ''';
 
-      final candidateModels = await _getAvailableModels(effectiveKey);
-      String lastErrorMsg = 'Failed to analyze document with available Gemini models.';
+      return await Future<ExtractedDocumentDetails>(() async {
+        final candidateModels = await _getAvailableModels(effectiveKey);
+        String lastErrorMsg = 'Failed to analyze document with available Gemini models.';
 
-      for (final modelName in candidateModels) {
-        developer.log('[GeminiExtractionService] Attempting extraction with model: $modelName');
+        for (final modelName in candidateModels) {
+          developer.log('[GeminiExtractionService] Attempting extraction with model: $modelName');
 
-        // 1. Try with official Google Generative AI SDK
-        try {
-          final model = GenerativeModel(
-            model: modelName,
-            apiKey: effectiveKey,
-            generationConfig: GenerationConfig(
-              responseMimeType: 'application/json',
-              temperature: 0.1,
-            ),
-          );
-
-          final content = [
-            Content.multi([
-              TextPart(prompt),
-              DataPart(mimeType, bytes),
-            ]),
-          ];
-
-          final response = await model.generateContent(content).timeout(
-            const Duration(seconds: 15),
-            onTimeout: () => throw TimeoutException('Gemini AI request timed out after 15 seconds.'),
-          );
-          final responseText = response.text;
-
-          if (responseText != null && responseText.trim().isNotEmpty) {
-            final parsed = _parseJsonDetails(responseText);
-            if (parsed != null) {
-              _saveWorkingModel(modelName);
-              return parsed;
-            }
-          }
-        } catch (sdkError) {
-          final sdkErrorStr = sdkError.toString();
-          developer.log('[GeminiExtractionService] SDK error for $modelName: $sdkErrorStr');
-
-          if (sdkErrorStr.contains('API key not valid') || sdkErrorStr.contains('API_KEY_INVALID')) {
-            return ExtractedDocumentDetails.error(
-              'Invalid API Key: Google Gemini rejected this key. Please check your key in Settings.',
+          // 1. Try with official Google Generative AI SDK
+          try {
+            final model = GenerativeModel(
+              model: modelName,
+              apiKey: effectiveKey,
+              generationConfig: GenerationConfig(
+                responseMimeType: 'application/json',
+                temperature: 0.1,
+              ),
             );
-          }
 
-          // If this model does not support images, skip immediately to the next candidate
-          if (sdkErrorStr.contains('Image input modality is not enabled')) {
-            if (_cachedWorkingModel == modelName) _cachedWorkingModel = null;
-            continue;
-          }
+            final content = [
+              Content.multi([
+                TextPart(prompt),
+                DataPart(mimeType, bytes),
+              ]),
+            ];
 
-          // If this model is experiencing high demand / 503 / 429 or timeout, skip to next candidate immediately
-          final isUnavailable = sdkErrorStr.contains('503') ||
-              sdkErrorStr.contains('UNAVAILABLE') ||
-              sdkErrorStr.contains('high demand') ||
-              sdkErrorStr.contains('RESOURCE_EXHAUSTED') ||
-              sdkErrorStr.contains('429') ||
-              sdkErrorStr.contains('timed out');
-          if (isUnavailable) {
-            developer.log('[GeminiExtractionService] Model $modelName is unavailable or timed out. Skipping to next candidate.');
-            continue;
-          }
+            final response = await model.generateContent(content).timeout(
+              const Duration(seconds: 10),
+              onTimeout: () => throw TimeoutException('Gemini AI request timed out after 10 seconds.'),
+            );
+            final responseText = response.text;
 
-          final isNotFound = sdkErrorStr.contains('NOT_FOUND') ||
-              sdkErrorStr.contains('not found') ||
-              sdkErrorStr.contains('not supported for generateContent');
+            if (responseText != null && responseText.trim().isNotEmpty) {
+              final parsed = _parseJsonDetails(responseText);
+              if (parsed != null) {
+                _saveWorkingModel(modelName);
+                return parsed;
+              }
+            }
+          } catch (sdkError) {
+            final sdkErrorStr = sdkError.toString();
+            developer.log('[GeminiExtractionService] SDK error for $modelName: $sdkErrorStr');
 
-          if (!isNotFound) {
-            lastErrorMsg = sdkErrorStr;
-          }
+            if (sdkErrorStr.contains('API key not valid') || sdkErrorStr.contains('API_KEY_INVALID')) {
+              return ExtractedDocumentDetails.error(
+                'Invalid API Key: Google Gemini rejected this key. Please check your key in Settings.',
+              );
+            }
 
-          // 2. Direct REST fallback for this model
-          final restResult = await _restApiFallback(
-            apiKey: effectiveKey,
-            modelName: modelName,
-            mimeType: mimeType,
-            bytes: bytes,
-            prompt: prompt,
-          );
+            // If quota exhausted (429 / RESOURCE_EXHAUSTED), fail fast to observe cooldown
+            if (sdkErrorStr.contains('RESOURCE_EXHAUSTED') || sdkErrorStr.contains('429')) {
+              return ExtractedDocumentDetails.error(
+                'Gemini API quota exceeded (Rate limit / 429). Will retry after cooldown.',
+              );
+            }
 
-          if (restResult != null) {
-            if (restResult.errorMessage != null) {
-              if (restResult.errorMessage!.contains('API_KEY_INVALID')) {
+            // If this model does not support images, skip immediately to the next candidate
+            if (sdkErrorStr.contains('Image input modality is not enabled')) {
+              if (_cachedWorkingModel == modelName) _cachedWorkingModel = null;
+              continue;
+            }
+
+            // If this model is experiencing high demand / 503 or timeout, skip to next candidate immediately
+            final isUnavailable = sdkErrorStr.contains('503') ||
+                sdkErrorStr.contains('UNAVAILABLE') ||
+                sdkErrorStr.contains('high demand') ||
+                sdkErrorStr.contains('timed out');
+            if (isUnavailable) {
+              developer.log('[GeminiExtractionService] Model $modelName is unavailable or timed out. Skipping to next candidate.');
+              continue;
+            }
+
+            final isNotFound = sdkErrorStr.contains('NOT_FOUND') ||
+                sdkErrorStr.contains('not found') ||
+                sdkErrorStr.contains('not supported for generateContent');
+
+            if (!isNotFound) {
+              lastErrorMsg = sdkErrorStr;
+            }
+
+            // 2. Direct REST fallback for this model
+            final restResult = await _restApiFallback(
+              apiKey: effectiveKey,
+              modelName: modelName,
+              mimeType: mimeType,
+              bytes: bytes,
+              prompt: prompt,
+            );
+
+            if (restResult != null) {
+              if (restResult.errorMessage != null) {
+                if (restResult.errorMessage!.contains('API_KEY_INVALID') ||
+                    restResult.errorMessage!.contains('quota exceeded')) {
+                  return restResult;
+                }
+                lastErrorMsg = restResult.errorMessage!;
+                // Proceed to next candidate model
+                continue;
+              } else {
+                _saveWorkingModel(modelName);
                 return restResult;
               }
-              lastErrorMsg = restResult.errorMessage!;
-              // Proceed to next candidate model
-              continue;
-            } else {
-              _saveWorkingModel(modelName);
-              return restResult;
             }
           }
         }
-      }
 
-      return ExtractedDocumentDetails.error(lastErrorMsg);
+        return ExtractedDocumentDetails.error(lastErrorMsg);
+      }).timeout(
+        const Duration(seconds: 25),
+        onTimeout: () => ExtractedDocumentDetails.error(
+          'Document analysis timed out after 25 seconds. Please retry.',
+        ),
+      );
     } catch (e, stack) {
       developer.log('[GeminiExtractionService] Extraction error: $e', error: e, stackTrace: stack);
       return ExtractedDocumentDetails.error('Document analysis error: $e');
@@ -349,7 +357,7 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(payload),
       ).timeout(
-        const Duration(seconds: 15),
+        const Duration(seconds: 10),
         onTimeout: () => throw TimeoutException('Connection to Gemini REST API timed out.'),
       );
 
@@ -377,7 +385,9 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
           }
         } catch (_) {}
 
-        if (errorMsg.contains('API_KEY_INVALID') || errorMsg.contains('API key not valid')) {
+        if (response.statusCode == 429 || errorMsg.contains('RESOURCE_EXHAUSTED')) {
+          errorMsg = 'Gemini API quota exceeded (Rate limit / 429). Will retry after cooldown.';
+        } else if (errorMsg.contains('API_KEY_INVALID') || errorMsg.contains('API key not valid')) {
           errorMsg = 'Invalid Gemini API key. Please verify your key in Settings.';
         } else if (errorMsg.contains('SERVICE_DISABLED') || errorMsg.contains('has not been used in project')) {
           errorMsg = 'Generative Language API is disabled in your Google Cloud Project. Please enable it in Google Cloud Console.';

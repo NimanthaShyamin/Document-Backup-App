@@ -7,6 +7,7 @@ import '../../domain/entities/vehicle_document.dart';
 
 import '../controllers/document_providers.dart';
 import '../utils/document_action_helper.dart';
+import '../widgets/pending_ai_scan_badge.dart';
 import 'document_viewer_screen.dart';
 
 /// Data model for a smart folder shown on the home screen.
@@ -681,6 +682,11 @@ class _FolderContentsScreenState extends ConsumerState<FolderContentsScreen> {
                         isDark ? Colors.white10 : const Color(0xFFF1F5F9),
                         isDark ? Colors.white70 : const Color(0xFF334155),
                       ),
+                      if (doc.requiresAiScan)
+                        PendingAiScanBadge(
+                          documentId: doc.id,
+                          isDark: isDark,
+                        ),
                       if (doc.expiryDate != null)
                         _badge(
                           isExpired

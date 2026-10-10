@@ -25,6 +25,10 @@ class VehicleDocuments extends Table {
   TextColumn get hiddenContext => text().nullable()();
   BoolColumn get requiresAiScan => boolean().withDefault(const Constant(false))();
 
+  // Phase 5 Recycle Bin & Cloud Sync Deletion Tombstones
+  BoolColumn get isDeleted => boolean().withDefault(const Constant(false))();
+  IntColumn get deletedAt => integer().nullable()();
+
   @override
   Set<Column> get primaryKey => {id};
 }
@@ -43,12 +47,23 @@ class SyncQueue extends Table {
   IntColumn get createdAt => integer()();
 }
 
-@DriftDatabase(tables: [VehicleDocuments, SyncQueue])
+/// Table representing permanently deleted documents (tombstones) to prevent cloud re-downloading.
+@DataClassName('DocumentTombstoneData')
+class DocumentTombstones extends Table {
+  TextColumn get documentId => text()();
+  TextColumn get driveFileId => text().nullable()();
+  IntColumn get deletedAt => integer()();
+
+  @override
+  Set<Column> get primaryKey => {documentId};
+}
+
+@DriftDatabase(tables: [VehicleDocuments, SyncQueue, DocumentTombstones])
 class AppDatabase extends _$AppDatabase {
   AppDatabase([QueryExecutor? e]) : super(e ?? _openConnection());
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   static QueryExecutor _openConnection() {
     return driftDatabase(
@@ -83,6 +98,12 @@ class AppDatabase extends _$AppDatabase {
               )
               WHERE vehicle_reg_no IS NOT NULL AND vehicle_reg_no != '' AND vehicle_reg_no != 'General';
             ''');
+          }
+
+          if (from < 3) {
+            await m.addColumn(vehicleDocuments, vehicleDocuments.isDeleted);
+            await m.addColumn(vehicleDocuments, vehicleDocuments.deletedAt);
+            await m.createTable(documentTombstones);
           }
         },
         beforeOpen: (details) async {

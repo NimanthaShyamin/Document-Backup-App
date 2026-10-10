@@ -8,6 +8,7 @@ import 'core/hardware/notification_engine.dart';
 import 'core/storage/file_storage_manager.dart';
 import 'core/theme/app_preferences_provider.dart';
 import 'data/datasources/local/app_database.dart';
+import 'data/datasources/remote/ai_rescan_worker.dart';
 import 'data/datasources/remote/drive_sync_service.dart';
 import 'data/datasources/remote/google_auth_service.dart';
 import 'data/repositories/sync_repository.dart';
@@ -19,7 +20,11 @@ const String backgroundSyncTaskKey = 'com.vehicledocs.syncTask';
 @pragma('vm:entry-point')
 void callbackDispatcher() {
   Workmanager().executeTask((task, inputData) async {
-    developer.log('Executing WorkManager background sync task: $task');
+    developer.log('Executing WorkManager background task: $task');
+
+    if (task == AiRescanWorker.aiRescanTaskKey) {
+      return await AiRescanWorker.executeWorker();
+    }
 
     if (task == backgroundSyncTaskKey) {
       final db = AppDatabase();
@@ -76,6 +81,9 @@ Future<void> main() async {
         networkType: NetworkType.connected,
       ),
     );
+
+    // Schedule background AI rescan worker if any documents are pending scan
+    await AiRescanWorker.scheduleRescanIfPending();
   } catch (e) {
     developer.log('WorkManager initialization note: $e');
   }

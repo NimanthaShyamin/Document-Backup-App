@@ -6,6 +6,7 @@ import '../../core/theme/liquid_glass_theme.dart';
 import '../controllers/document_providers.dart';
 import '../widgets/cloud_sync_settings_card.dart';
 import 'login_screen.dart';
+import 'recycle_bin_screen.dart';
 
 /// Settings screen matching user design with Apple Liquid Glass styling,
 /// Theme switcher, Trilingual support (English, සිංහල, සිංග්ලිෂ්),
@@ -61,6 +62,11 @@ class SettingsScreen extends ConsumerWidget {
 
             // 4. Biometric Document Deletion Protection Toggle Card (Default: ON)
             _buildBiometricDeleteToggleCard(context, ref, isBiometricRequired, isLiquidGlass, language, isDark),
+
+            const SizedBox(height: 16),
+
+            // 4.1. Recycle Bin & Retention Policy Card
+            _buildRecycleBinCard(context, ref, isLiquidGlass, language, isDark),
 
             const SizedBox(height: 16),
 
@@ -744,6 +750,92 @@ class SettingsScreen extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  // --- 4.1. Recycle Bin & Retention Policy Card ---
+  Widget _buildRecycleBinCard(
+    BuildContext context,
+    WidgetRef ref,
+    bool isLiquidGlass,
+    AppLanguage language,
+    bool isDark,
+  ) {
+    final retentionDays = ref.watch(recycleBinRetentionDaysProvider);
+    final recycledAsync = ref.watch(recycleBinDocumentsStreamProvider);
+    final count = recycledAsync.value?.length ?? 0;
+
+    return LiquidGlassCard(
+      isLiquidGlass: isLiquidGlass,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const RecycleBinScreen()),
+        );
+      },
+      child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.amberAccent.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(
+                Icons.delete_sweep_outlined,
+                color: Colors.amberAccent,
+                size: 22,
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Recycle Bin',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                      color: isDark ? Colors.white : const Color(0xFF0F172A),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Restore or permanently delete • Auto-purges in $retentionDays days',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: isDark ? Colors.white60 : const Color(0xFF64748B),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (count > 0) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.amberAccent.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  '$count',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.amberAccent,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+            ],
+            Icon(
+              Icons.chevron_right,
+              color: isDark ? Colors.white38 : const Color(0xFF94A3B8),
+              size: 20,
+            ),
+          ],
+        ),
+      );
   }
 
   // --- 5. Gemini AI Document Scanner & Auto-Fill Card ---

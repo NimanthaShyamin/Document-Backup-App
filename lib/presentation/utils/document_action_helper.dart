@@ -49,12 +49,12 @@ class DocumentActionHelper {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Are you sure you want to permanently delete "${document.title}" (${document.vehicleRegNo})?',
+              'Are you sure you want to delete "${document.title}" (${document.vehicleRegNo})?',
               style: const TextStyle(color: Colors.white, fontSize: 14, height: 1.4),
             ),
             const SizedBox(height: 10),
             Text(
-              'This document will be deleted from your encrypted vault and scheduled for cloud deletion.',
+              'This document will be moved to the Recycle Bin. You can restore it anytime from Settings > Recycle Bin.',
               style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 12),
             ),
           ],
@@ -101,8 +101,7 @@ class DocumentActionHelper {
                   SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      'Authentication canceled or failed. Deletion aborted for security.',
-                      style: TextStyle(color: Colors.white, fontSize: 13),
+                      'Authentication canceled or failed. Action aborted for security.',
                     ),
                   ),
                 ],
@@ -119,7 +118,7 @@ class DocumentActionHelper {
       }
     }
 
-    // 3. Perform Document Deletion
+    // 3. Perform Document Deletion (Move to Recycle Bin)
     try {
       final repo = ref.read(vehicleDocumentRepositoryProvider);
       await repo.deleteDocument(document.id);
@@ -130,21 +129,28 @@ class DocumentActionHelper {
           SnackBar(
             content: Row(
               children: [
-                const Icon(Icons.check_circle_outline, color: Colors.greenAccent, size: 20),
+                const Icon(Icons.delete_outline, color: Colors.amberAccent, size: 20),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'Deleted "${document.title}" from vault.',
+                    'Moved "${document.title}" to Recycle Bin.',
                     style: const TextStyle(color: Colors.white, fontSize: 13),
                   ),
                 ),
               ],
             ),
+            action: SnackBarAction(
+              label: 'Undo',
+              textColor: const Color(0xFF38BDF8),
+              onPressed: () async {
+                await repo.restoreFromRecycleBin(document.id);
+              },
+            ),
             backgroundColor: const Color(0xFF1E293B),
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             margin: const EdgeInsets.fromLTRB(16, 0, 16, 20),
-            duration: const Duration(seconds: 3),
+            duration: const Duration(seconds: 4),
           ),
         );
       }

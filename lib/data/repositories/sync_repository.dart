@@ -4,7 +4,9 @@ import 'dart:io';
 import 'dart:math';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:drift/drift.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/constants/drive_constants.dart';
+import '../../core/errors/exceptions.dart';
 import '../../core/storage/file_storage_manager.dart';
 import '../../core/utils/crypto_utils.dart';
 import '../../domain/entities/sync_status.dart';
@@ -47,7 +49,9 @@ class SyncRepository implements ISyncQueueRepository {
       StreamController<SyncEngineState>.broadcast();
 
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
+  StreamSubscription? _authSubscription;
   bool _isReconciling = false;
+  bool _needsReconcileAgain = false;
 
   SyncRepository({
     required AppDatabase db,
@@ -59,6 +63,7 @@ class SyncRepository implements ISyncQueueRepository {
         _storageManager = storageManager,
         _connectivity = connectivity ?? Connectivity() {
     _initializeConnectivityListener();
+    _initializeAuthListener();
   }
 
   @override
@@ -67,12 +72,30 @@ class SyncRepository implements ISyncQueueRepository {
   /// Underlying DriveSyncService instance.
   DriveSyncService get driveService => _driveService;
 
+  /// Listens to auth state changes and automatically triggers cloud sync when user logs in.
+  void _initializeAuthListener() {
+    _authSubscription = _driveService.authService.onCurrentUserChanged.listen((account) {
+      if (account != null) {
+        developer.log('[SyncRepository] Google account active (${account.email}). Triggering auto-reconciliation.');
+        unawaited(reconcile());
+      }
+    });
+  }
+
   /// Listens to network state transitions and triggers non-blocking reconciliation when back online.
   void _initializeConnectivityListener() {
     _connectivitySubscription = _connectivity.onConnectivityChanged.listen((results) {
       final isConnected = results.any((r) => r != ConnectivityResult.none);
       if (isConnected) {
-        developer.log('[SyncRepository] Internet connection restored. Initiating reconciliation.');
+        developer.log('[SyncRepository] Internet connection restored. Initiating automatic reconciliation.');
+        // Reset retry timestamp on queued tasks so pending offline uploads execute immediately
+        final now = DateTime.now().millisecondsSinceEpoch;
+        _db.customUpdate(
+          'UPDATE sync_queue SET next_retry_at = ? WHERE next_retry_at > ?',
+          variables: [Variable.withInt(now), Variable.withInt(now)],
+          updates: {_db.syncQueue},
+        ).catchError((_) => 0);
+
         unawaited(reconcile());
       } else {
         developer.log('[SyncRepository] Internet connection lost. Device is offline.');
@@ -102,8 +125,8 @@ class SyncRepository implements ISyncQueueRepository {
           ),
         );
 
-    // 3. Trigger immediate non-blocking reconciliation
-    unawaited(processQueue());
+    // 3. Trigger immediate non-blocking reconciliation so document uploads automatically
+    unawaited(reconcile());
   }
 
   /// Marks a document for remote deletion and enqueues cloud cleanup.
@@ -129,7 +152,7 @@ class SyncRepository implements ISyncQueueRepository {
         );
 
     // 3. Trigger immediate non-blocking execution
-    unawaited(processQueue());
+    unawaited(reconcile());
   }
 
   /// Compatibility alias for startup delta reconciliation.
@@ -146,7 +169,8 @@ class SyncRepository implements ISyncQueueRepository {
   /// 7. Resolves any timestamp-based delta conflicts between cloud and local states.
   Future<void> reconcile({bool interactiveAuth = false}) async {
     if (_isReconciling) {
-      developer.log('[SyncRepository] Reconciliation already in progress. Skipping duplicate run.');
+      developer.log('[SyncRepository] Reconciliation already in progress. Scheduling follow-up run.');
+      _needsReconcileAgain = true;
       return;
     }
 
@@ -159,7 +183,10 @@ class SyncRepository implements ISyncQueueRepository {
 
     // Verify authentication status before attempting cloud reconciliation
     if (!_driveService.authService.isSignedIn) {
-      final account = await _driveService.authService.signInSilently();
+      final account = await _driveService.authService.signInSilently().timeout(
+            const Duration(seconds: 10),
+            onTimeout: () => null,
+          );
       if (account == null) {
         if (!interactiveAuth) {
           developer.log('[SyncRepository] Cloud reconciliation skipped: Google Drive is not connected.');
@@ -167,7 +194,10 @@ class SyncRepository implements ISyncQueueRepository {
           return;
         } else {
           // Explicit user trigger: initiate sign-in
-          await _driveService.authService.signIn();
+          await _driveService.authService.signIn().timeout(
+                const Duration(seconds: 40),
+                onTimeout: () => throw const DriveAuthException('Sign-in timed out.'),
+              );
         }
       }
     }
@@ -178,7 +208,33 @@ class SyncRepository implements ISyncQueueRepository {
     );
 
     try {
-      // Step A: Process all pending uploads
+      // Step 0: Auto cleanup expired recycle bin documents before sync
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final retentionDays = prefs.getInt('pref_recycle_bin_retention_days') ?? 30;
+        if (retentionDays > 0) {
+          final cutoff = DateTime.now().subtract(Duration(days: retentionDays)).millisecondsSinceEpoch;
+          final expired = await (_db.select(_db.vehicleDocuments)
+                ..where((t) => t.isDeleted.equals(true) & t.deletedAt.isSmallerOrEqualValue(cutoff)))
+              .get();
+          for (final doc in expired) {
+            await _storageManager.deleteDocumentFolder(doc.id);
+            await _db.into(_db.documentTombstones).insertOnConflictUpdate(
+                  DocumentTombstonesCompanion.insert(
+                    documentId: doc.id,
+                    driveFileId: Value(doc.driveFileId),
+                    deletedAt: DateTime.now().millisecondsSinceEpoch,
+                  ),
+                );
+            await (_db.delete(_db.vehicleDocuments)..where((t) => t.id.equals(doc.id))).go();
+            await enqueueDelete(doc.id, doc.driveFileId);
+          }
+        }
+      } catch (e) {
+        developer.log('[SyncRepository] Auto cleanup recycle bin error during reconcile: $e');
+      }
+
+      // Step A: Process all pending uploads (including previously failed or offline-queued)
       await _uploadAllPendingDocuments();
 
       // Step B: Process all pending deletes
@@ -193,10 +249,16 @@ class SyncRepository implements ISyncQueueRepository {
       final localDocs = await _db.select(_db.vehicleDocuments).get();
       final localMap = {for (final d in localDocs) d.id: d};
 
+      // Query tombstones and queued deletions to prevent ghost cloud resurrection
+      final tombstones = await _db.select(_db.documentTombstones).get();
+      final tombstoneDocIds = {for (final t in tombstones) t.documentId};
+      final queuedDeleteTasks = await (_db.select(_db.syncQueue)..where((t) => t.action.equals('delete'))).get();
+      final queuedDeleteIds = {for (final q in queuedDeleteTasks) q.documentId};
+
       int totalItems = remoteBackups.length + localDocs.length;
       int processedCount = 0;
 
-      // 1. Detect and download remote documents missing on local storage
+      // 1. Detect and download remote documents missing on local storage or missing file on disk
       for (final remote in remoteBackups) {
         processedCount++;
         final progress = 0.35 + (0.35 * (processedCount / (totalItems == 0 ? 1 : totalItems)));
@@ -207,11 +269,44 @@ class SyncRepository implements ISyncQueueRepository {
           ),
         );
 
+        // CHECK 1: If document has been permanently deleted, purge from Drive AppData immediately & skip
+        if (tombstoneDocIds.contains(remote.documentId) || queuedDeleteIds.contains(remote.documentId)) {
+          developer.log('[SyncRepository] Remote file ${remote.documentId} is tombstoned/queued for delete. Purging from Drive AppData...');
+          try {
+            await _driveService.deleteRemoteFile(remote.driveFileId);
+          } catch (e) {
+            developer.log('[SyncRepository] Could not purge tombstoned remote file: $e');
+          }
+          continue;
+        }
+
         final localDoc = localMap[remote.documentId];
-        if (localDoc == null) {
-          // Document exists on Drive AppData but is completely missing locally -> Download
-          developer.log('[SyncRepository] Discovered missing document in AppData: ${remote.documentId}. Downloading...');
-          await _downloadRemoteDocument(remote);
+
+        // CHECK 2: If document is currently in Recycle Bin, do NOT resurrect or download
+        if (localDoc != null && localDoc.isDeleted) {
+          developer.log('[SyncRepository] Document ${remote.documentId} is in local Recycle Bin. Skipping sync download.');
+          continue;
+        }
+
+        File? localFile;
+        if (localDoc != null) {
+          localFile = await _storageManager.resolveFile(localDoc.id, localDoc.localFilePath);
+          if (localFile != null && localFile.path != localDoc.localFilePath) {
+            await (_db.update(_db.vehicleDocuments)..where((t) => t.id.equals(localDoc.id))).write(
+              VehicleDocumentsCompanion(localFilePath: Value(localFile.path)),
+            );
+          }
+        }
+        final isFileMissingLocally = localDoc == null || localFile == null;
+
+        if (localDoc == null || isFileMissingLocally) {
+          // Document exists on Drive AppData but is completely missing locally or file missing -> Download
+          developer.log('[SyncRepository] Ensuring offline availability for: ${remote.documentId}. Downloading...');
+          try {
+            await _downloadRemoteDocument(remote);
+          } catch (e) {
+            developer.log('[SyncRepository] Failed to download remote document ${remote.documentId}: $e');
+          }
         } else {
           // Document exists locally and remotely: evaluate checksum and timestamps
           if (localDoc.fileChecksumSha256 == remote.checksumSha256) {
@@ -227,7 +322,11 @@ class SyncRepository implements ISyncQueueRepository {
             // Checksum mismatch: conflict resolution
             if (remote.clientModified.millisecondsSinceEpoch > localDoc.lastModifiedTimestamp) {
               developer.log('[SyncRepository] Remote document ${localDoc.id} is newer. Downloading update...');
-              await _downloadRemoteDocument(remote);
+              try {
+                await _downloadRemoteDocument(remote);
+              } catch (e) {
+                developer.log('[SyncRepository] Failed downloading updated remote document ${localDoc.id}: $e');
+              }
             } else if (localDoc.lastModifiedTimestamp > remote.clientModified.millisecondsSinceEpoch) {
               developer.log('[SyncRepository] Local document ${localDoc.id} is newer. Scheduling upload...');
               await enqueueUpload(localDoc.id);
@@ -236,7 +335,38 @@ class SyncRepository implements ISyncQueueRepository {
         }
       }
 
-      // Step D: Drain FIFO retry queue if any scheduled retries remain
+      // Step D: Ensure all active local documents in SQLite have physical files available offline
+      for (final doc in localDocs) {
+        if (doc.isDeleted) continue;
+        var localFile = await _storageManager.resolveFile(doc.id, doc.localFilePath);
+        if (localFile != null && localFile.path != doc.localFilePath) {
+          await (_db.update(_db.vehicleDocuments)..where((t) => t.id.equals(doc.id))).write(
+            VehicleDocumentsCompanion(localFilePath: Value(localFile.path)),
+          );
+        }
+
+        if (localFile == null && doc.driveFileId != null && doc.driveFileId!.isNotEmpty) {
+          developer.log('[SyncRepository] Local file missing on disk for ${doc.id}. Restoring offline file from Drive...');
+          try {
+            final ext = doc.localFilePath.contains('.') ? doc.localFilePath.split('.').last : 'dat';
+            final targetPath = await _storageManager.generatePath(doc.id, ext);
+            final targetFile = File(targetPath);
+            await _driveService.downloadFile(
+              fileId: doc.driveFileId!,
+              targetFile: targetFile,
+              expectedSha256: doc.fileChecksumSha256,
+            );
+            await (_db.update(_db.vehicleDocuments)..where((t) => t.id.equals(doc.id))).write(
+              VehicleDocumentsCompanion(localFilePath: Value(targetPath)),
+            );
+            developer.log('[SyncRepository] Offline restore complete for ${doc.id}');
+          } catch (e) {
+            developer.log('[SyncRepository] Could not restore offline file for ${doc.id}: $e');
+          }
+        }
+      }
+
+      // Step E: Drain FIFO retry queue if any scheduled retries remain
       await processQueue();
 
       _syncStateController.add(const SyncEngineState.idle());
@@ -247,6 +377,10 @@ class SyncRepository implements ISyncQueueRepository {
       if (interactiveAuth) rethrow;
     } finally {
       _isReconciling = false;
+      if (_needsReconcileAgain) {
+        _needsReconcileAgain = false;
+        unawaited(reconcile());
+      }
     }
   }
 
@@ -407,17 +541,59 @@ class SyncRepository implements ISyncQueueRepository {
     );
   }
 
-  /// Uploads all documents currently marked as `pending_upload` or `queued_upload`.
+  /// Uploads all documents currently marked as `pending_upload`, `queued_upload`, or `sync_failed`.
   Future<void> _uploadAllPendingDocuments() async {
     final pendingDocs = await (_db.select(_db.vehicleDocuments)
-          ..where((t) => t.syncStatus.isIn(['pending_upload', 'queued_upload'])))
+          ..where((t) => t.syncStatus.isIn(['pending_upload', 'queued_upload', 'sync_failed'])))
         .get();
 
+    int count = 0;
     for (final doc in pendingDocs) {
+      count++;
+      _syncStateController.add(
+        SyncEngineState.syncing(
+          progress: 0.05 + (0.25 * (count / pendingDocs.length)),
+          currentAction: 'Backing up "${doc.title.isNotEmpty ? doc.title : doc.id}"...',
+        ),
+      );
+
       try {
-        final localFile = File(doc.localFilePath);
-        if (!await localFile.exists()) {
-          developer.log('[SyncRepository] Local file missing for upload: ${doc.localFilePath}. Skipping.');
+        var localFile = await _storageManager.resolveFile(doc.id, doc.localFilePath);
+        if (localFile != null && localFile.path != doc.localFilePath) {
+          await (_db.update(_db.vehicleDocuments)..where((t) => t.id.equals(doc.id))).write(
+            VehicleDocumentsCompanion(localFilePath: Value(localFile.path)),
+          );
+        }
+
+        if (localFile == null) {
+          developer.log('[SyncRepository] Local file missing for upload: ${doc.localFilePath}.');
+          if (doc.driveFileId != null && doc.driveFileId!.isNotEmpty) {
+            // Restore from cloud
+            try {
+              final ext = doc.localFilePath.contains('.') ? doc.localFilePath.split('.').last : 'dat';
+              final targetPath = await _storageManager.generatePath(doc.id, ext);
+              localFile = await _driveService.downloadFile(
+                fileId: doc.driveFileId!,
+                targetFile: File(targetPath),
+                expectedSha256: doc.fileChecksumSha256,
+              );
+              await (_db.update(_db.vehicleDocuments)..where((t) => t.id.equals(doc.id))).write(
+                VehicleDocumentsCompanion(
+                  localFilePath: Value(targetPath),
+                  syncStatus: const Value('synced'),
+                ),
+              );
+              await (_db.delete(_db.syncQueue)..where((t) => t.documentId.equals(doc.id))).go();
+            } catch (e) {
+              developer.log('[SyncRepository] Offline file restoration failed for ${doc.id}: $e');
+            }
+          } else {
+            developer.log('[SyncRepository] Local file unrecoverable for ${doc.id}. Marking sync_failed.');
+            await (_db.update(_db.vehicleDocuments)..where((t) => t.id.equals(doc.id))).write(
+              const VehicleDocumentsCompanion(syncStatus: Value('sync_failed')),
+            );
+            await (_db.delete(_db.syncQueue)..where((t) => t.documentId.equals(doc.id))).go();
+          }
           continue;
         }
 
@@ -445,20 +621,46 @@ class SyncRepository implements ISyncQueueRepository {
         developer.log('[SyncRepository] Successfully synced document ${doc.id} with Drive ID $driveId');
       } catch (e) {
         developer.log('[SyncRepository] Failed to upload pending document ${doc.id}: $e');
+        var existingTask = await (_db.select(_db.syncQueue)..where((t) => t.documentId.equals(doc.id))).getSingleOrNull();
+        if (existingTask == null) {
+          final queueId = await _db.into(_db.syncQueue).insert(
+                SyncQueueCompanion.insert(
+                  documentId: doc.id,
+                  action: 'upload',
+                  retryCount: const Value(0),
+                  nextRetryAt: DateTime.now().millisecondsSinceEpoch,
+                  createdAt: DateTime.now().millisecondsSinceEpoch,
+                ),
+              );
+          existingTask = await (_db.select(_db.syncQueue)..where((t) => t.queueId.equals(queueId))).getSingleOrNull();
+        }
+
+        if (existingTask != null) {
+          await _handleQueueTaskFailure(existingTask, e.toString());
+        } else {
+          await (_db.update(_db.vehicleDocuments)..where((t) => t.id.equals(doc.id))).write(
+            const VehicleDocumentsCompanion(syncStatus: Value('sync_failed')),
+          );
+        }
       }
     }
   }
 
-  /// Deletes all documents currently marked as `pending_delete` or `queued_delete`.
+  /// Deletes all documents currently marked as `pending_delete` or `queued_delete`,
+  /// processes queued deletion tasks from the sync queue, and purges remote files
+  /// for tombstoned documents.
   Future<void> _deleteAllPendingDocuments() async {
+    // 1. Process documents marked as pending_delete or queued_delete in vehicleDocuments
     final pendingDeletes = await (_db.select(_db.vehicleDocuments)
           ..where((t) => t.syncStatus.isIn(['pending_delete', 'queued_delete'])))
         .get();
 
     for (final doc in pendingDeletes) {
       try {
-        if (doc.driveFileId != null) {
+        if (doc.driveFileId != null && doc.driveFileId!.isNotEmpty) {
           await _driveService.deleteRemoteFile(doc.driveFileId!);
+        } else {
+          await _driveService.deleteRemoteFileByDocumentId(doc.id);
         }
         await _storageManager.deleteDocumentFolder(doc.id);
         await (_db.delete(_db.vehicleDocuments)..where((t) => t.id.equals(doc.id))).go();
@@ -468,6 +670,37 @@ class SyncRepository implements ISyncQueueRepository {
         developer.log('[SyncRepository] Failed to delete document ${doc.id}: $e');
       }
     }
+
+    // 2. Process pending delete tasks in syncQueue
+    final queuedDeletes = await (_db.select(_db.syncQueue)..where((t) => t.action.equals('delete'))).get();
+    for (final task in queuedDeletes) {
+      try {
+        if (task.driveFileId != null && task.driveFileId!.isNotEmpty) {
+          await _driveService.deleteRemoteFile(task.driveFileId!);
+        } else {
+          await _driveService.deleteRemoteFileByDocumentId(task.documentId);
+        }
+        await _storageManager.deleteDocumentFolder(task.documentId);
+        await (_db.delete(_db.syncQueue)..where((t) => t.queueId.equals(task.queueId))).go();
+        developer.log('[SyncRepository] Completed queued delete for ${task.documentId}');
+      } catch (e) {
+        developer.log('[SyncRepository] Failed to process queued delete for ${task.documentId}: $e');
+      }
+    }
+
+    // 3. Purge tombstoned files from Google Drive AppData
+    final tombstones = await _db.select(_db.documentTombstones).get();
+    for (final tomb in tombstones) {
+      try {
+        if (tomb.driveFileId != null && tomb.driveFileId!.isNotEmpty) {
+          await _driveService.deleteRemoteFile(tomb.driveFileId!);
+        } else {
+          await _driveService.deleteRemoteFileByDocumentId(tomb.documentId);
+        }
+      } catch (e) {
+        developer.log('[SyncRepository] Tombstone cloud sync cleanup error for ${tomb.documentId}: $e');
+      }
+    }
   }
 
   /// Downloads a remote document from Google Drive AppData into sandboxed local storage and registers in SQLite.
@@ -475,6 +708,11 @@ class SyncRepository implements ISyncQueueRepository {
     final fileExt = remote.name.contains('.') ? remote.name.split('.').last : 'dat';
     final targetPath = await _storageManager.generatePath(remote.documentId, fileExt);
     final targetFile = File(targetPath);
+
+    // Ensure directory exists
+    if (!await targetFile.parent.exists()) {
+      await targetFile.parent.create(recursive: true);
+    }
 
     // Save temporary stub in SQLite to ensure atomic tracking
     await _db.into(_db.vehicleDocuments).insertOnConflictUpdate(
@@ -533,6 +771,16 @@ class SyncRepository implements ISyncQueueRepository {
         await _handleQueueTaskFailure(task, e.toString());
       }
     }
+
+    final upcomingTasks = await (_db.select(_db.syncQueue)
+          ..where((t) => t.nextRetryAt.isBiggerThanValue(now))
+          ..orderBy([(t) => OrderingTerm(expression: t.nextRetryAt, mode: OrderingMode.asc)])
+          ..limit(1))
+        .get();
+    if (upcomingTasks.isNotEmpty) {
+      final delayMs = max(0, upcomingTasks.first.nextRetryAt - now);
+      _scheduleQueueRetry(Duration(milliseconds: delayMs));
+    }
   }
 
   Future<void> _executeQueueTask(SyncQueueData task) async {
@@ -544,8 +792,40 @@ class SyncRepository implements ISyncQueueRepository {
 
         if (doc == null) return;
 
+        var localFile = await _storageManager.resolveFile(doc.id, doc.localFilePath);
+        if (localFile != null && localFile.path != doc.localFilePath) {
+          await (_db.update(_db.vehicleDocuments)..where((t) => t.id.equals(doc.id))).write(
+            VehicleDocumentsCompanion(localFilePath: Value(localFile.path)),
+          );
+        }
+
+        if (localFile == null) {
+          developer.log('[SyncRepository] Queue task file missing for ${doc.id}');
+          if (doc.driveFileId != null && doc.driveFileId!.isNotEmpty) {
+            final ext = doc.localFilePath.contains('.') ? doc.localFilePath.split('.').last : 'dat';
+            final targetPath = await _storageManager.generatePath(doc.id, ext);
+            localFile = await _driveService.downloadFile(
+              fileId: doc.driveFileId!,
+              targetFile: File(targetPath),
+              expectedSha256: doc.fileChecksumSha256,
+            );
+            await (_db.update(_db.vehicleDocuments)..where((t) => t.id.equals(doc.id))).write(
+              VehicleDocumentsCompanion(
+                localFilePath: Value(targetPath),
+                syncStatus: const Value('synced'),
+              ),
+            );
+            return;
+          } else {
+            await (_db.update(_db.vehicleDocuments)..where((t) => t.id.equals(doc.id))).write(
+              const VehicleDocumentsCompanion(syncStatus: Value('sync_failed')),
+            );
+            return;
+          }
+        }
+
         final driveId = await _driveService.uploadFile(
-          localFile: File(doc.localFilePath),
+          localFile: localFile,
           documentId: doc.id,
           documentType: doc.documentType,
           vehicleRegNo: doc.vehicleRegNo,
@@ -570,20 +850,32 @@ class SyncRepository implements ISyncQueueRepository {
 
         if (doc == null || task.driveFileId == null) return;
 
+        final ext = doc.localFilePath.contains('.') ? doc.localFilePath.split('.').last : 'dat';
+        final targetPath = await _storageManager.generatePath(doc.id, ext);
+        final targetFile = File(targetPath);
+        if (!await targetFile.parent.exists()) {
+          await targetFile.parent.create(recursive: true);
+        }
+
         await _driveService.downloadFile(
           fileId: task.driveFileId!,
-          targetFile: File(doc.localFilePath),
+          targetFile: targetFile,
           expectedSha256: doc.fileChecksumSha256,
         );
 
         await (_db.update(_db.vehicleDocuments)..where((t) => t.id.equals(doc.id))).write(
-          const VehicleDocumentsCompanion(syncStatus: Value('synced')),
+          VehicleDocumentsCompanion(
+            localFilePath: Value(targetPath),
+            syncStatus: const Value('synced'),
+          ),
         );
         break;
 
       case 'delete':
-        if (task.driveFileId != null) {
+        if (task.driveFileId != null && task.driveFileId!.isNotEmpty) {
           await _driveService.deleteRemoteFile(task.driveFileId!);
+        } else {
+          await _driveService.deleteRemoteFileByDocumentId(task.documentId);
         }
         await _storageManager.deleteDocumentFolder(task.documentId);
         await (_db.delete(_db.vehicleDocuments)..where((t) => t.id.equals(task.documentId))).go();
@@ -618,10 +910,30 @@ class SyncRepository implements ISyncQueueRepository {
         errorMessage: Value(error),
       ),
     );
+
+    // Keep status as queued_upload so user UI does not show false failure banner while retrying
+    await (_db.update(_db.vehicleDocuments)..where((t) => t.id.equals(task.documentId))).write(
+      const VehicleDocumentsCompanion(syncStatus: Value('queued_upload')),
+    );
+
+    // Schedule automated queue retry timer
+    _scheduleQueueRetry(Duration(milliseconds: clampedBackoff));
+  }
+
+  Timer? _retryTimer;
+
+  void _scheduleQueueRetry(Duration delay) {
+    _retryTimer?.cancel();
+    _retryTimer = Timer(delay, () {
+      developer.log('[SyncRepository] Triggering scheduled queue retry after backoff.');
+      unawaited(processQueue());
+    });
   }
 
   void dispose() {
+    _retryTimer?.cancel();
     _connectivitySubscription?.cancel();
+    _authSubscription?.cancel();
     _syncStateController.close();
   }
 }

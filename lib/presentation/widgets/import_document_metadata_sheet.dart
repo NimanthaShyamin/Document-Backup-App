@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/theme/app_preferences_provider.dart';
 import '../../core/theme/liquid_glass_theme.dart';
+import '../../data/datasources/remote/ai_rescan_worker.dart';
 import '../../data/datasources/remote/gemini_document_extraction_service.dart';
 import '../../domain/entities/document_category.dart';
 import '../../domain/entities/document_type.dart';
@@ -233,6 +234,11 @@ class _ImportDocumentMetadataSheetState
         requiresAiScan: _requiresAiScan,
         sourceFile: widget.sourceFile,
       );
+
+      // Trigger the background worker queue if document requires an online AI scan
+      if (_requiresAiScan) {
+        await AiRescanWorker.scheduleRescan();
+      }
 
       if (mounted) {
         // Close modal sheet FIRST so it never hangs open

@@ -10,8 +10,10 @@ import '../../domain/entities/document_type.dart';
 import '../../domain/entities/sync_status.dart';
 import '../../domain/entities/vehicle_document.dart';
 import '../controllers/document_providers.dart';
+import '../controllers/foreground_scanner_service.dart';
 import '../utils/document_action_helper.dart';
 import '../widgets/import_document_metadata_sheet.dart';
+import '../widgets/pending_ai_scan_badge.dart';
 import 'document_viewer_screen.dart';
 import 'folder_contents_screen.dart';
 
@@ -52,6 +54,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _runStartupCleanup();
+    });
+  }
+
+  Future<void> _runStartupCleanup() async {
+    try {
+      final retentionDays = ref.read(recycleBinRetentionDaysProvider);
+      final repo = ref.read(vehicleDocumentRepositoryProvider);
+      await repo.autoCleanupRecycleBin(retentionDays);
+    } catch (_) {}
   }
 
   @override
@@ -182,6 +195,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   Widget build(BuildContext context) {
     final docsAsync = ref.watch(vehicleDocumentsStreamProvider);
     final syncAsync = ref.watch(syncEngineStateProvider);
+    // Keep foreground AI scanner active while app is running
+    ref.watch(foregroundScannerServiceProvider);
     final isLiquidGlass = ref.watch(liquidGlassEnabledProvider);
     final isCategorized = ref.watch(categorizedViewProvider);
     final language = ref.watch(appLanguageProvider);
@@ -313,7 +328,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           _buildSyncStatusBar(
-                              syncAsync.value, isLiquidGlass, language),
+                              syncAsync.value, isLiquidGlass, language, realDocs),
                           const SizedBox(height: 14),
 
                         if (_statusFilter != null) ...[
@@ -1168,6 +1183,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                             ? Colors.white
                             : const Color(0xFF334155),
                       ),
+                      if (doc.requiresAiScan)
+                        PendingAiScanBadge(
+                          documentId: doc.id,
+                          isDark: isDark,
+                        ),
                       if (doc.expiryDate != null)
                         _badge(
                           isExpired
@@ -1215,7 +1235,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   // ── Sync Status Bar ──────────────────────────────────────────────────
 
   Widget _buildSyncStatusBar(
-      SyncEngineState? state, bool isLiquidGlass, AppLanguage language) {
+      SyncEngineState? state, bool isLiquidGlass, AppLanguage language, [List<VehicleDocument>? docs]) {
+    final failedDocs = (docs ?? []).where((d) => d.syncStatus == SyncStatus.syncFailed).toList();
+    final pendingDocs = (docs ?? []).where((d) => d.syncStatus == SyncStatus.queuedUpload || d.syncStatus == SyncStatus.downloadPending).toList();
+
     String text = AppStrings.get('cloud_connected', language);
     Color color = Colors.greenAccent;
     IconData icon = Icons.cloud_done;
@@ -1232,6 +1255,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       text = AppStrings.get('cloud_offline', language);
       color = Colors.amberAccent;
       icon = Icons.cloud_off;
+    } else if (state is SyncEngineFailed) {
+      text = 'Sync error: ${state.error}';
+      color = Colors.redAccent;
+      icon = Icons.sync_problem_rounded;
+    } else if (failedDocs.isNotEmpty) {
+      text = 'Sync failed for ${failedDocs.length} doc${failedDocs.length > 1 ? 's' : ''} (Tap to retry)';
+      color = Colors.redAccent;
+      icon = Icons.sync_problem_rounded;
+    } else if (pendingDocs.isNotEmpty) {
+      text = '${pendingDocs.length} doc${pendingDocs.length > 1 ? 's' : ''} queued for cloud backup';
+      color = LiquidGlassTheme.accentAmber;
+      icon = Icons.cloud_upload_outlined;
     }
 
     return GestureDetector(

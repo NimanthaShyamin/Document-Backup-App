@@ -82,7 +82,44 @@ class FakeVehicleDocumentRepository implements IVehicleDocumentRepository {
   @override
   Future<void> deleteDocument(String id) async {
     deletedIds.add(id);
+    await moveToRecycleBin(id);
+  }
+
+  @override
+  Stream<List<VehicleDocument>> watchRecycleBinDocuments() =>
+      Stream.value(_docs.where((d) => d.isDeleted).toList());
+
+  @override
+  Future<void> moveToRecycleBin(String id) async {
+    final idx = _docs.indexWhere((d) => d.id == id);
+    if (idx != -1) {
+      _docs[idx] = _docs[idx].copyWith(isDeleted: true, deletedAt: DateTime.now());
+    }
+  }
+
+  @override
+  Future<void> restoreFromRecycleBin(String id) async {
+    final idx = _docs.indexWhere((d) => d.id == id);
+    if (idx != -1) {
+      _docs[idx] = _docs[idx].copyWith(isDeleted: false, deletedAt: null);
+    }
+  }
+
+  @override
+  Future<void> permanentlyDeleteDocument(String id) async {
+    deletedIds.add(id);
     _docs.removeWhere((d) => d.id == id);
+  }
+
+  @override
+  Future<void> emptyRecycleBin() async {
+    _docs.removeWhere((d) => d.isDeleted);
+  }
+
+  @override
+  Future<void> autoCleanupRecycleBin(int retentionDays) async {
+    final cutoff = DateTime.now().subtract(Duration(days: retentionDays));
+    _docs.removeWhere((d) => d.isDeleted && d.deletedAt != null && d.deletedAt!.isBefore(cutoff));
   }
 }
 
@@ -148,7 +185,7 @@ void main() {
 
       // Verify Confirmation Dialog appears
       expect(find.text('Delete Document?'), findsOneWidget);
-      expect(find.textContaining('Are you sure you want to permanently delete "Revenue License 2026"'), findsOneWidget);
+      expect(find.textContaining('Are you sure you want to delete "Revenue License 2026"'), findsOneWidget);
       final dialogDeleteBtn = find.descendant(of: find.byType(AlertDialog), matching: find.text('Delete'));
       expect(find.text('Cancel'), findsOneWidget);
       expect(dialogDeleteBtn, findsOneWidget);

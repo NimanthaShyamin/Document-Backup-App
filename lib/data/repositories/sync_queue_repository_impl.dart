@@ -8,6 +8,7 @@ import '../../core/storage/file_storage_manager.dart';
 import '../../domain/entities/sync_status.dart';
 import '../../domain/repositories/i_sync_queue_repository.dart';
 import '../datasources/local/app_database.dart';
+import '../datasources/remote/ai_rescan_worker.dart';
 import '../datasources/remote/drive_app_data_service.dart';
 
 /// Concrete implementation of the FIFO Offline-to-Cloud Sync Engine.
@@ -44,6 +45,7 @@ class SyncQueueRepository implements ISyncQueueRepository {
       if (isConnected) {
         developer.log('Network connectivity restored. Triggering sync queue processing.');
         processQueue();
+        AiRescanWorker.scheduleRescanIfPending(dbOverride: _db);
       }
     });
   }
@@ -101,12 +103,30 @@ class SyncQueueRepository implements ISyncQueueRepository {
       final remoteFiles = await _driveService.listAppDataFiles();
       final remoteMap = {for (var f in remoteFiles) f.documentId: f};
 
-      // 2. Fetch local SQLite catalog
+      // 2. Fetch local SQLite catalog and tombstones
       final localDocs = await _db.select(_db.vehicleDocuments).get();
       final localMap = {for (var d in localDocs) d.id: d};
+      final tombstones = await _db.select(_db.documentTombstones).get();
+      final tombstoneIds = {for (var t in tombstones) t.documentId};
+      final queuedDeleteTasks = await (_db.select(_db.syncQueue)..where((t) => t.action.equals('delete'))).get();
+      final queuedDeleteIds = {for (var q in queuedDeleteTasks) q.documentId};
 
       // 3. Detect remote documents missing locally (Cloud -> Local Download)
       for (final remote in remoteFiles) {
+        if (tombstoneIds.contains(remote.documentId) || queuedDeleteIds.contains(remote.documentId)) {
+          developer.log('Remote file ${remote.documentId} is tombstoned/queued for delete. Deleting remote.');
+          try {
+            await _driveService.deleteDocumentFile(remote.driveFileId);
+          } catch (_) {}
+          continue;
+        }
+
+        final localDoc = localMap[remote.documentId];
+        if (localDoc != null && localDoc.isDeleted) {
+          developer.log('Remote file ${remote.documentId} is in Recycle Bin. Skipping.');
+          continue;
+        }
+
         if (!localMap.containsKey(remote.documentId)) {
           developer.log('Discovered new remote document: ${remote.documentId}. Scheduling download.');
           final sandboxedPath = await _storageManager.generatePath(

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:developer' as developer;
 import 'dart:io';
+import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:googleapis/drive/v3.dart' as drive;
 import 'package:http/http.dart' as http;
@@ -23,30 +24,88 @@ class DriveSyncService {
   Future<drive.DriveApi> _getDriveApi({bool promptIfUnauthenticated = true}) =>
       _authService.getDriveApi(promptIfUnauthenticated: promptIfUnauthenticated);
 
-  /// Executes a Drive API call with automatic 401 retry (re-authenticating on token expiration).
+  /// Executes a Drive API call with automatic 401 token refresh and transient error retries (429, 403, 5xx, network drops).
   Future<T> _executeWithRetry<T>(Future<T> Function(drive.DriveApi api) action) async {
-    try {
-      final api = await _getDriveApi();
-      return await action(api);
-    } on drive.DetailedApiRequestError catch (e) {
-      if (e.status == 401) {
-        developer.log('Received 401 Unauthorized from Drive API. Attempting silent re-auth...');
-        await _authService.signInSilently(reAuthenticate: true);
-        final freshApi = await _getDriveApi();
-        return await action(freshApi);
+    int attempts = 0;
+    const maxAttempts = 3;
+
+    while (true) {
+      attempts++;
+      try {
+        final api = await _getDriveApi().timeout(
+          const Duration(seconds: 15),
+          onTimeout: () => throw const DriveSyncException('Authentication with Google Drive timed out.'),
+        );
+        return await action(api).timeout(
+          const Duration(seconds: 30),
+          onTimeout: () => throw const DriveSyncException('Google Drive request timed out after 30s.'),
+        );
+      } on drive.DetailedApiRequestError catch (e) {
+        if (e.status == 401 && attempts < maxAttempts) {
+          developer.log('Received 401 Unauthorized from Drive API (attempt $attempts). Refreshing token and clearing cached API...');
+          await _authService.clearCachedApi();
+          await _authService.signInSilently(reAuthenticate: true).timeout(
+                const Duration(seconds: 15),
+                onTimeout: () => null,
+              );
+          await Future.delayed(Duration(milliseconds: 500 * attempts));
+          continue;
+        }
+
+        final isTransient = e.status == 429 ||
+            e.status == 403 ||
+            (e.status != null && e.status! >= 500 && e.status! < 600);
+
+        if (isTransient && attempts < maxAttempts) {
+          final backoffMs = (1000 * pow(2, attempts - 1)).toInt();
+          developer.log('Transient Drive API error (${e.status}). Retrying in ${backoffMs}ms (attempt $attempts)...');
+          await Future.delayed(Duration(milliseconds: backoffMs));
+          continue;
+        }
+
+        developer.log('Drive API error (${e.status}): ${e.message}', error: e);
+        throw DriveSyncException('Drive API error [${e.status}]: ${e.message}', e);
+      } on SocketException catch (e) {
+        if (attempts < maxAttempts) {
+          developer.log('Network connectivity dropped during Drive operation. Retrying in 1s (attempt $attempts)...');
+          await Future.delayed(Duration(seconds: attempts));
+          continue;
+        }
+        developer.log('Network connectivity lost during Drive operation: $e');
+        throw DriveSyncException('Network connectivity lost: ${e.message}', e);
+      } on http.ClientException catch (e) {
+        if (attempts < maxAttempts) {
+          developer.log('HTTP Client exception during Drive operation. Retrying in 1s (attempt $attempts)...');
+          await Future.delayed(Duration(seconds: attempts));
+          continue;
+        }
+        developer.log('HTTP Client exception during Drive operation: $e');
+        throw DriveSyncException('HTTP connection failure: ${e.message}', e);
+      } on TimeoutException catch (e) {
+        if (attempts < maxAttempts) {
+          developer.log('Timeout during Drive operation. Retrying (attempt $attempts)...');
+          await Future.delayed(Duration(seconds: attempts));
+          continue;
+        }
+        developer.log('Timeout during Drive operation: $e');
+        throw DriveSyncException('Google Drive operation timed out: ${e.message}', e);
+      } on DriveAuthException catch (e) {
+        if (attempts < maxAttempts) {
+          developer.log('DriveAuthException during Drive operation (attempt $attempts): $e. Refreshing token and clearing cached API...');
+          await _authService.clearCachedApi();
+          await _authService.signInSilently(reAuthenticate: true).timeout(
+                const Duration(seconds: 15),
+                onTimeout: () => null,
+              );
+          await Future.delayed(Duration(milliseconds: 500 * attempts));
+          continue;
+        }
+        rethrow;
+      } catch (e, stack) {
+        if (e is AppException) rethrow;
+        developer.log('Unexpected error during Drive operation', error: e, stackTrace: stack);
+        throw DriveSyncException('Drive operation failed: $e', e);
       }
-      developer.log('Drive API error (${e.status}): ${e.message}', error: e);
-      throw DriveSyncException('Drive API error [${e.status}]: ${e.message}', e);
-    } on SocketException catch (e) {
-      developer.log('Network connectivity lost during Drive operation: $e');
-      throw DriveSyncException('Network connectivity lost: ${e.message}', e);
-    } on http.ClientException catch (e) {
-      developer.log('HTTP Client exception during Drive operation: $e');
-      throw DriveSyncException('HTTP connection failure: ${e.message}', e);
-    } catch (e, stack) {
-      if (e is AppException) rethrow;
-      developer.log('Unexpected error during Drive operation', error: e, stackTrace: stack);
-      throw DriveSyncException('Drive operation failed: $e', e);
     }
   }
 
@@ -107,17 +166,6 @@ class DriveSyncService {
     };
 
     return _executeWithRetry((driveApi) async {
-      final driveFile = drive.File()
-        ..name = fileName
-        ..parents = [DriveConstants.appDataSpace]
-        ..appProperties = appProperties;
-
-      final mediaStream = drive.Media(
-        localFile.openRead(),
-        fileLength,
-        contentType: mimeType,
-      );
-
       // Query to check if the file already exists in AppData
       final existingFiles = await driveApi.files.list(
         spaces: DriveConstants.appDataSpace,
@@ -129,16 +177,57 @@ class DriveSyncService {
       if (existingFiles.files != null && existingFiles.files!.isNotEmpty) {
         final existingId = existingFiles.files!.first.id!;
         developer.log('Existing remote file found ($existingId). Updating in-place...');
-        uploadedFile = await driveApi.files.update(
-          driveFile,
-          existingId,
-          uploadMedia: mediaStream,
-        );
-        developer.log('Updated existing AppData file: $existingId');
+        final updateMetadata = drive.File()
+          ..name = fileName
+          ..appProperties = appProperties;
+
+        try {
+          final mediaStream = drive.Media(
+            localFile.openRead(),
+            fileLength,
+            contentType: mimeType,
+          );
+          uploadedFile = await driveApi.files.update(
+            updateMetadata,
+            existingId,
+            uploadMedia: mediaStream,
+          );
+          developer.log('Updated existing AppData file: $existingId');
+        } on drive.DetailedApiRequestError catch (updateError) {
+          if (updateError.status == 404) {
+            developer.log('Existing file was not found (404). Falling back to creating new AppData file...');
+            final createMetadata = drive.File()
+              ..name = fileName
+              ..parents = [DriveConstants.appDataSpace]
+              ..appProperties = appProperties;
+            final fallbackStream = drive.Media(
+              localFile.openRead(),
+              fileLength,
+              contentType: mimeType,
+            );
+            uploadedFile = await driveApi.files.create(
+              createMetadata,
+              uploadMedia: fallbackStream,
+            );
+            developer.log('Created fallback AppData file: ${uploadedFile.id}');
+          } else {
+            // Rethrow non-404 errors (401, 403, 429, 5xx) so _executeWithRetry handles them
+            rethrow;
+          }
+        }
       } else {
         developer.log('No existing file found. Creating new AppData file: $fileName');
+        final createMetadata = drive.File()
+          ..name = fileName
+          ..parents = [DriveConstants.appDataSpace]
+          ..appProperties = appProperties;
+        final mediaStream = drive.Media(
+          localFile.openRead(),
+          fileLength,
+          contentType: mimeType,
+        );
         uploadedFile = await driveApi.files.create(
-          driveFile,
+          createMetadata,
           uploadMedia: mediaStream,
         );
         developer.log('Created new AppData file: ${uploadedFile.id}');
@@ -239,6 +328,29 @@ class DriveSyncService {
           return;
         }
         rethrow;
+      }
+    });
+  }
+
+  /// Deletes a file from `appDataFolder` by its associated documentId, searching by name and appProperties.
+  Future<void> deleteRemoteFileByDocumentId(String documentId) async {
+    return _executeWithRetry((driveApi) async {
+      final list = await driveApi.files.list(
+        spaces: DriveConstants.appDataSpace,
+        q: "'${DriveConstants.appDataSpace}' in parents and trashed = false and (name = '$documentId.pdf' or name = '$documentId.png' or name = '$documentId.jpg' or appProperties has { key='document_id' and value='$documentId' })",
+        $fields: 'files(id, name)',
+      );
+      if (list.files != null) {
+        for (final file in list.files!) {
+          if (file.id != null) {
+            try {
+              await driveApi.files.delete(file.id!);
+              developer.log('Deleted remote file by documentId ($documentId): ${file.id}');
+            } on drive.DetailedApiRequestError catch (e) {
+              if (e.status != 404) rethrow;
+            }
+          }
+        }
       }
     });
   }
