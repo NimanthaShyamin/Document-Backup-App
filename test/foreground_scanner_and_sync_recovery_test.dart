@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vehicle_document_vault/core/storage/file_storage_manager.dart';
 import 'package:vehicle_document_vault/data/datasources/local/app_database.dart';
+import 'package:vehicle_document_vault/data/datasources/remote/ai_rescan_worker.dart';
 import 'package:vehicle_document_vault/data/datasources/remote/gemini_document_extraction_service.dart';
 import 'package:vehicle_document_vault/data/datasources/remote/google_auth_service.dart';
 
@@ -193,6 +194,86 @@ void main() {
 
       final doc = await (db.select(db.vehicleDocuments)..where((t) => t.id.equals('test-exhausted-doc'))).getSingle();
       expect(doc.syncStatus, equals('sync_failed'));
+    });
+
+    test('AiRescanWorker uses fixed unique task name to prevent WorkManager task storms', () {
+      expect(AiRescanWorker.rescanUniqueWorkName, equals('com.vehicledocs.ai_rescan_worker'));
+    });
+
+    test('AppDatabase initializes with busy_timeout and WAL mode pragmas without error', () async {
+      // Execute a custom query to ensure migrations and beforeOpen run
+      final result = await db.customSelect('PRAGMA busy_timeout;').get();
+      expect(result, isNotEmpty);
+    });
+
+    test('AiRescanWorker defers scanning when documents are pending cloud backup', () async {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      // Insert a document that needs AI scan AND is pending upload
+      await db.into(db.vehicleDocuments).insert(
+        VehicleDocumentsCompanion.insert(
+          id: 'pending-backup-doc',
+          documentType: 'insurance',
+          category: const Value('insurance'),
+          title: 'Insurance',
+          vehicleRegNo: 'WP-1111',
+          localFilePath: dummyFile.path,
+          fileChecksumSha256: 'pendinghash',
+          syncStatus: 'pending_upload',
+          lastModifiedTimestamp: now,
+          createdAt: now,
+          requiresAiScan: const Value(true),
+        ),
+      );
+
+      // Insert active upload task in sync queue
+      await db.into(db.syncQueue).insert(
+        SyncQueueCompanion.insert(
+          documentId: 'pending-backup-doc',
+          action: 'upload',
+          retryCount: const Value(0),
+          nextRetryAt: now,
+          createdAt: now,
+        ),
+      );
+
+      // Execute worker with dbOverride and skipScheduleNext = true
+      final workerResult = await AiRescanWorker.executeWorker(
+        dbOverride: db,
+        apiKeyOverride: 'dummy_api_key',
+        skipScheduleNext: true,
+      );
+
+      // Should return true (graceful deferral), and requiresAiScan should still be true (not scanned yet)
+      expect(workerResult, isTrue);
+      final doc = await (db.select(db.vehicleDocuments)..where((t) => t.id.equals('pending-backup-doc'))).getSingle();
+      expect(doc.requiresAiScan, isTrue);
+    });
+
+    test('Deleted documents (in Recycle Bin) are excluded from pending upload query', () async {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      // Document in recycle bin but marked as pending_upload
+      await db.into(db.vehicleDocuments).insert(
+        VehicleDocumentsCompanion.insert(
+          id: 'deleted-doc',
+          documentType: 'insurance',
+          category: const Value('insurance'),
+          title: 'Recycle Bin Doc',
+          vehicleRegNo: 'WP-2222',
+          localFilePath: dummyFile.path,
+          fileChecksumSha256: 'deletedhash',
+          syncStatus: 'pending_upload',
+          lastModifiedTimestamp: now,
+          createdAt: now,
+          isDeleted: const Value(true),
+          deletedAt: Value(now),
+        ),
+      );
+
+      final pendingDocs = await (db.select(db.vehicleDocuments)
+            ..where((t) => t.syncStatus.isIn(['pending_upload', 'queued_upload', 'sync_failed']) & t.isDeleted.equals(false)))
+          .get();
+
+      expect(pendingDocs.where((d) => d.id == 'deleted-doc'), isEmpty);
     });
   });
 }

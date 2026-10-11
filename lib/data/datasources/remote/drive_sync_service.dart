@@ -37,8 +37,8 @@ class DriveSyncService {
           onTimeout: () => throw const DriveSyncException('Authentication with Google Drive timed out.'),
         );
         return await action(api).timeout(
-          const Duration(seconds: 30),
-          onTimeout: () => throw const DriveSyncException('Google Drive request timed out after 30s.'),
+          const Duration(seconds: 60),
+          onTimeout: () => throw const DriveSyncException('Google Drive request timed out after 60s.'),
         );
       } on drive.DetailedApiRequestError catch (e) {
         if (e.status == 401 && attempts < maxAttempts) {
@@ -98,6 +98,14 @@ class DriveSyncService {
                 onTimeout: () => null,
               );
           await Future.delayed(Duration(milliseconds: 500 * attempts));
+          continue;
+        }
+        rethrow;
+      } on DriveSyncException catch (e) {
+        if (attempts < maxAttempts) {
+          final backoffMs = (1000 * pow(2, attempts - 1)).toInt();
+          developer.log('DriveSyncException during Drive operation (attempt $attempts): $e. Retrying in ${backoffMs}ms...');
+          await Future.delayed(Duration(milliseconds: backoffMs));
           continue;
         }
         rethrow;

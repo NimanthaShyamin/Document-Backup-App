@@ -34,9 +34,21 @@ class AiRescanWorker {
     final bool ownsDb = dbOverride == null;
 
     try {
+      // 0. Priority gating: Defer AI extraction if documents are pending in the sync queue
+      final pendingQueue = await (db.select(db.syncQueue)..where((t) => t.action.equals('upload'))).get();
+
+      if (pendingQueue.isNotEmpty) {
+        developer.log('[AiRescanWorker] Found ${pendingQueue.length} upload task(s) in sync queue. Deferring AI scan.');
+        if (!skipScheduleNext) {
+          await scheduleRescan(initialDelay: const Duration(seconds: 30));
+        }
+        if (ownsDb) await db.close();
+        return true;
+      }
+
       // 1. Query for pending documents needing AI scan, ordered by oldest first
       final pendingDocs = await (db.select(db.vehicleDocuments)
-            ..where((t) => t.requiresAiScan.equals(true))
+            ..where((t) => t.requiresAiScan.equals(true) & t.isDeleted.equals(false))
             ..orderBy([(t) => OrderingTerm(expression: t.createdAt, mode: OrderingMode.asc)]))
           .get();
 
@@ -164,13 +176,14 @@ class AiRescanWorker {
     }
   }
 
+  static const String rescanUniqueWorkName = 'com.vehicledocs.ai_rescan_worker';
+
   /// Schedules a one-off background worker task with network constraint
   /// and an optional initial delay (default: immediate).
   static Future<void> scheduleRescan({Duration initialDelay = Duration.zero}) async {
     try {
-      final uniqueName = 'ai_rescan_${DateTime.now().millisecondsSinceEpoch}';
       await Workmanager().registerOneOffTask(
-        uniqueName,
+        rescanUniqueWorkName,
         aiRescanTaskKey,
         initialDelay: initialDelay,
         constraints: Constraints(

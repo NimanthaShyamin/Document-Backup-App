@@ -14,6 +14,7 @@ import '../../domain/repositories/i_sync_queue_repository.dart';
 import '../datasources/local/app_database.dart';
 import '../datasources/remote/drive_sync_service.dart';
 import '../datasources/remote/google_auth_service.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 /// Result summary of an end-to-end cloud sync verification test probe.
 class VerificationProbeResult {
@@ -50,6 +51,7 @@ class SyncRepository implements ISyncQueueRepository {
 
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
   StreamSubscription? _authSubscription;
+  Timer? _connectivityDebounceTimer;
   bool _isReconciling = false;
   bool _needsReconcileAgain = false;
 
@@ -72,6 +74,9 @@ class SyncRepository implements ISyncQueueRepository {
   /// Underlying DriveSyncService instance.
   DriveSyncService get driveService => _driveService;
 
+  /// Whether cloud reconciliation is currently running.
+  bool get isReconciling => _isReconciling;
+
   /// Listens to auth state changes and automatically triggers cloud sync when user logs in.
   void _initializeAuthListener() {
     _authSubscription = _driveService.authService.onCurrentUserChanged.listen((account) {
@@ -86,17 +91,23 @@ class SyncRepository implements ISyncQueueRepository {
   void _initializeConnectivityListener() {
     _connectivitySubscription = _connectivity.onConnectivityChanged.listen((results) {
       final isConnected = results.any((r) => r != ConnectivityResult.none);
+      _connectivityDebounceTimer?.cancel();
       if (isConnected) {
-        developer.log('[SyncRepository] Internet connection restored. Initiating automatic reconciliation.');
-        // Reset retry timestamp on queued tasks so pending offline uploads execute immediately
-        final now = DateTime.now().millisecondsSinceEpoch;
-        _db.customUpdate(
-          'UPDATE sync_queue SET next_retry_at = ? WHERE next_retry_at > ?',
-          variables: [Variable.withInt(now), Variable.withInt(now)],
-          updates: {_db.syncQueue},
-        ).catchError((_) => 0);
+        _syncStateController.add(
+          const SyncEngineState.syncing(progress: 0.0, currentAction: 'Connecting to cloud vault...'),
+        );
+        _connectivityDebounceTimer = Timer(const Duration(milliseconds: 1000), () {
+          developer.log('[SyncRepository] Internet connection restored (debounced). Initiating automatic reconciliation.');
+          // Reset retry timestamp on queued tasks so pending offline uploads execute immediately
+          final now = DateTime.now().millisecondsSinceEpoch;
+          _db.customUpdate(
+            'UPDATE sync_queue SET next_retry_at = ? WHERE next_retry_at > ?',
+            variables: [Variable.withInt(now), Variable.withInt(now)],
+            updates: {_db.syncQueue},
+          ).catchError((_) => 0);
 
-        unawaited(reconcile());
+          unawaited(reconcile());
+        });
       } else {
         developer.log('[SyncRepository] Internet connection lost. Device is offline.');
         _syncStateController.add(const SyncEngineState.offline());
@@ -183,14 +194,25 @@ class SyncRepository implements ISyncQueueRepository {
 
     // Verify authentication status before attempting cloud reconciliation
     if (!_driveService.authService.isSignedIn) {
-      final account = await _driveService.authService.signInSilently().timeout(
-            const Duration(seconds: 10),
-            onTimeout: () => null,
-          );
+      GoogleSignInAccount? account;
+      for (int i = 0; i < 3; i++) {
+        account = await _driveService.authService.signInSilently().timeout(
+              const Duration(seconds: 10),
+              onTimeout: () => null,
+            );
+        if (account != null) break;
+        if (!interactiveAuth && i < 2) {
+          await Future.delayed(const Duration(seconds: 2));
+        }
+      }
       if (account == null) {
         if (!interactiveAuth) {
           developer.log('[SyncRepository] Cloud reconciliation skipped: Google Drive is not connected.');
           _syncStateController.add(const SyncEngineState.idle());
+          final pendingCount = await (_db.select(_db.syncQueue)..where((t) => t.action.equals('upload'))).get();
+          if (pendingCount.isNotEmpty) {
+            _scheduleQueueRetry(const Duration(seconds: 10));
+          }
           return;
         } else {
           // Explicit user trigger: initiate sign-in
@@ -544,11 +566,12 @@ class SyncRepository implements ISyncQueueRepository {
   /// Uploads all documents currently marked as `pending_upload`, `queued_upload`, or `sync_failed`.
   Future<void> _uploadAllPendingDocuments() async {
     final pendingDocs = await (_db.select(_db.vehicleDocuments)
-          ..where((t) => t.syncStatus.isIn(['pending_upload', 'queued_upload', 'sync_failed'])))
+          ..where((t) => t.syncStatus.isIn(['pending_upload', 'queued_upload', 'sync_failed']) & t.isDeleted.equals(false)))
         .get();
 
     int count = 0;
     for (final doc in pendingDocs) {
+      if (doc.isDeleted) continue;
       count++;
       _syncStateController.add(
         SyncEngineState.syncing(
@@ -621,26 +644,30 @@ class SyncRepository implements ISyncQueueRepository {
         developer.log('[SyncRepository] Successfully synced document ${doc.id} with Drive ID $driveId');
       } catch (e) {
         developer.log('[SyncRepository] Failed to upload pending document ${doc.id}: $e');
-        var existingTask = await (_db.select(_db.syncQueue)..where((t) => t.documentId.equals(doc.id))).getSingleOrNull();
-        if (existingTask == null) {
-          final queueId = await _db.into(_db.syncQueue).insert(
-                SyncQueueCompanion.insert(
-                  documentId: doc.id,
-                  action: 'upload',
-                  retryCount: const Value(0),
-                  nextRetryAt: DateTime.now().millisecondsSinceEpoch,
-                  createdAt: DateTime.now().millisecondsSinceEpoch,
-                ),
-              );
-          existingTask = await (_db.select(_db.syncQueue)..where((t) => t.queueId.equals(queueId))).getSingleOrNull();
-        }
+        try {
+          var existingTask = await (_db.select(_db.syncQueue)..where((t) => t.documentId.equals(doc.id))).getSingleOrNull();
+          if (existingTask == null) {
+            final queueId = await _db.into(_db.syncQueue).insert(
+                  SyncQueueCompanion.insert(
+                    documentId: doc.id,
+                    action: 'upload',
+                    retryCount: const Value(0),
+                    nextRetryAt: DateTime.now().millisecondsSinceEpoch,
+                    createdAt: DateTime.now().millisecondsSinceEpoch,
+                  ),
+                );
+            existingTask = await (_db.select(_db.syncQueue)..where((t) => t.queueId.equals(queueId))).getSingleOrNull();
+          }
 
-        if (existingTask != null) {
-          await _handleQueueTaskFailure(existingTask, e.toString());
-        } else {
-          await (_db.update(_db.vehicleDocuments)..where((t) => t.id.equals(doc.id))).write(
-            const VehicleDocumentsCompanion(syncStatus: Value('sync_failed')),
-          );
+          if (existingTask != null) {
+            await _handleQueueTaskFailure(existingTask, e.toString());
+          } else {
+            await (_db.update(_db.vehicleDocuments)..where((t) => t.id.equals(doc.id))).write(
+              const VehicleDocumentsCompanion(syncStatus: Value('sync_failed')),
+            );
+          }
+        } catch (dbErr) {
+          developer.log('[SyncRepository] Error persisting pending upload failure to DB: $dbErr');
         }
       }
     }
@@ -768,7 +795,11 @@ class SyncRepository implements ISyncQueueRepository {
         await (_db.delete(_db.syncQueue)..where((t) => t.queueId.equals(task.queueId))).go();
       } catch (e) {
         developer.log('[SyncRepository] Task ${task.queueId} failed: $e');
-        await _handleQueueTaskFailure(task, e.toString());
+        try {
+          await _handleQueueTaskFailure(task, e.toString());
+        } catch (handleErr) {
+          developer.log('[SyncRepository] Error in _handleQueueTaskFailure: $handleErr');
+        }
       }
     }
 
@@ -790,7 +821,7 @@ class SyncRepository implements ISyncQueueRepository {
               ..where((t) => t.id.equals(task.documentId)))
             .getSingleOrNull();
 
-        if (doc == null) return;
+        if (doc == null || doc.isDeleted) return;
 
         var localFile = await _storageManager.resolveFile(doc.id, doc.localFilePath);
         if (localFile != null && localFile.path != doc.localFilePath) {
@@ -887,37 +918,43 @@ class SyncRepository implements ISyncQueueRepository {
     const maxRetries = 5;
     final nextRetryCount = task.retryCount + 1;
 
-    if (nextRetryCount >= maxRetries) {
-      developer.log('[SyncRepository] Max retries exceeded for task ${task.queueId}. Marking as sync_failed.');
-      await (_db.delete(_db.syncQueue)..where((t) => t.queueId.equals(task.queueId))).go();
-      await (_db.update(_db.vehicleDocuments)..where((t) => t.id.equals(task.documentId))).write(
-        const VehicleDocumentsCompanion(syncStatus: Value('sync_failed')),
-      );
-      return;
-    }
-
     // Exponential backoff: 5s * 2^retry + jitter (0-2000ms), clamped at 15 minutes (900,000ms)
     final randomJitter = Random().nextDouble() * 2000;
     final backoffMs = (5000 * pow(2, task.retryCount)).toInt() + randomJitter.toInt();
     final clampedBackoff = min(backoffMs, 900000);
     final nextRetryTimestamp = DateTime.now().millisecondsSinceEpoch + clampedBackoff;
 
-    await (_db.update(_db.syncQueue)..where((t) => t.queueId.equals(task.queueId))).write(
-      SyncQueueCompanion(
-        retryCount: Value(nextRetryCount),
-        lastAttempt: Value(DateTime.now().millisecondsSinceEpoch),
-        nextRetryAt: Value(nextRetryTimestamp),
-        errorMessage: Value(error),
-      ),
-    );
+    try {
+      if (nextRetryCount >= maxRetries) {
+        developer.log('[SyncRepository] Max retries exceeded for task ${task.queueId}. Marking as sync_failed.');
+        await (_db.delete(_db.syncQueue)..where((t) => t.queueId.equals(task.queueId))).go();
+        await (_db.update(_db.vehicleDocuments)..where((t) => t.id.equals(task.documentId))).write(
+          const VehicleDocumentsCompanion(syncStatus: Value('sync_failed')),
+        );
+        return;
+      }
 
-    // Keep status as queued_upload so user UI does not show false failure banner while retrying
-    await (_db.update(_db.vehicleDocuments)..where((t) => t.id.equals(task.documentId))).write(
-      const VehicleDocumentsCompanion(syncStatus: Value('queued_upload')),
-    );
+      await (_db.update(_db.syncQueue)..where((t) => t.queueId.equals(task.queueId))).write(
+        SyncQueueCompanion(
+          retryCount: Value(nextRetryCount),
+          lastAttempt: Value(DateTime.now().millisecondsSinceEpoch),
+          nextRetryAt: Value(nextRetryTimestamp),
+          errorMessage: Value(error),
+        ),
+      );
 
-    // Schedule automated queue retry timer
-    _scheduleQueueRetry(Duration(milliseconds: clampedBackoff));
+      // Keep status as queued_upload so user UI does not show false failure banner while retrying
+      await (_db.update(_db.vehicleDocuments)..where((t) => t.id.equals(task.documentId))).write(
+        const VehicleDocumentsCompanion(syncStatus: Value('queued_upload')),
+      );
+    } catch (e) {
+      developer.log('[SyncRepository] Database write during _handleQueueTaskFailure failed: $e');
+    } finally {
+      if (nextRetryCount < maxRetries) {
+        // Schedule automated queue retry timer
+        _scheduleQueueRetry(Duration(milliseconds: clampedBackoff));
+      }
+    }
   }
 
   Timer? _retryTimer;
@@ -931,6 +968,7 @@ class SyncRepository implements ISyncQueueRepository {
   }
 
   void dispose() {
+    _connectivityDebounceTimer?.cancel();
     _retryTimer?.cancel();
     _connectivitySubscription?.cancel();
     _authSubscription?.cancel();

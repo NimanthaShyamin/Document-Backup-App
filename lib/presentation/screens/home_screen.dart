@@ -113,75 +113,80 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                 ),
               ],
             ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-                  child: Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF2563EB).withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(10),
+            child: Material(
+              color: Colors.transparent,
+              borderRadius: BorderRadius.circular(20),
+              clipBehavior: Clip.antiAlias,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF2563EB).withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Icon(doc.documentType.icon, color: const Color(0xFF2563EB), size: 20),
                         ),
-                        child: Icon(doc.documentType.icon, color: const Color(0xFF2563EB), size: 20),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              doc.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 15,
-                                color: isDark ? Colors.white : const Color(0xFF0F172A),
-                              ),
-                            ),
-                            if (doc.vehicleRegNo.isNotEmpty && doc.vehicleRegNo != 'General')
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
                               Text(
-                                'Ref: ${doc.vehicleRegNo}',
+                                doc.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
-                                  fontSize: 11,
-                                  color: isDark ? Colors.white54 : const Color(0xFF64748B),
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 15,
+                                  color: isDark ? Colors.white : const Color(0xFF0F172A),
                                 ),
                               ),
-                          ],
+                              if (doc.vehicleRegNo.isNotEmpty && doc.vehicleRegNo != 'General')
+                                Text(
+                                  'Ref: ${doc.vehicleRegNo}',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: isDark ? Colors.white54 : const Color(0xFF64748B),
+                                  ),
+                                ),
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-                Divider(height: 1, color: isDark ? Colors.white10 : const Color(0xFFE2E8F0)),
-                ListTile(
-                  leading: const Icon(Icons.visibility_outlined, color: Color(0xFF2563EB)),
-                  title: const Text('View Document', style: TextStyle(fontWeight: FontWeight.w600)),
-                  onTap: () {
-                    Navigator.of(ctx).pop();
-                    Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) => DocumentViewerScreen(document: doc),
-                    ));
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.delete_outline, color: Color(0xFFDC2626)),
-                  title: const Text('Delete Document',
-                      style: TextStyle(color: Color(0xFFDC2626), fontWeight: FontWeight.bold)),
-                  onTap: () async {
-                    Navigator.of(ctx).pop();
-                    await DocumentActionHelper.confirmAndDeleteDocument(
-                      context: context,
-                      ref: ref,
-                      document: doc,
-                    );
-                  },
-                ),
-              ],
+                  Divider(height: 1, color: isDark ? Colors.white10 : const Color(0xFFE2E8F0)),
+                  ListTile(
+                    leading: const Icon(Icons.visibility_outlined, color: Color(0xFF2563EB)),
+                    title: const Text('View Document', style: TextStyle(fontWeight: FontWeight.w600)),
+                    onTap: () {
+                      Navigator.of(ctx).pop();
+                      Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => DocumentViewerScreen(document: doc),
+                      ));
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.delete_outline, color: Color(0xFFDC2626)),
+                    title: const Text('Delete Document',
+                        style: TextStyle(color: Color(0xFFDC2626), fontWeight: FontWeight.bold)),
+                    onTap: () async {
+                      Navigator.of(ctx).pop();
+                      await DocumentActionHelper.confirmAndDeleteDocument(
+                        context: context,
+                        ref: ref,
+                        document: doc,
+                      );
+                    },
+                  ),
+                ],
+              ),
             ),
           ),
         );

@@ -81,9 +81,12 @@ class PendingAiScanBadge extends ConsumerWidget {
     // 2. Global Cooldown Queue wait time calculation
     final waitSeconds = scanState.getWaitSecondsFor(documentId);
     final isCountdownActive = waitSeconds != null && waitSeconds > 0;
-    final badgeText = isCountdownActive
-        ? 'Pending Scan (in ${waitSeconds}s)'
-        : 'Pending AI Scan';
+    final isWaitingBackup = scanState.status == ScanStatus.waitingBackup;
+    final badgeText = isWaitingBackup
+        ? 'Waiting for Backup'
+        : (isCountdownActive
+            ? 'Pending Scan (in ${waitSeconds}s)'
+            : 'Pending AI Scan');
 
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -99,11 +102,13 @@ class PendingAiScanBadge extends ConsumerWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
-                isCountdownActive
-                    ? Icons.timer_outlined
-                    : (!scanState.isOnline
-                        ? Icons.cloud_off_rounded
-                        : Icons.hourglass_top_rounded),
+                isWaitingBackup
+                    ? Icons.cloud_upload_outlined
+                    : (isCountdownActive
+                        ? Icons.timer_outlined
+                        : (!scanState.isOnline
+                            ? Icons.cloud_off_rounded
+                            : Icons.hourglass_top_rounded)),
                 color: isDark ? Colors.amberAccent : Colors.amber.shade800,
                 size: 10,
               ),

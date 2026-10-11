@@ -255,5 +255,39 @@ void main() {
       // "Scan Now" button should be hidden while already scanning this document
       expect(find.text('Scan Now'), findsNothing);
     });
+
+    testWidgets('Waiting for Backup: displays "Waiting for Backup" badge with cloud_upload icon and null wait seconds', (tester) async {
+      const backupState = ForegroundScanState(
+        status: ScanStatus.waitingBackup,
+        isOnline: true,
+        baseSecondsRemaining: 0,
+        pendingQueueIds: ['doc_backup_1', 'doc_backup_2'],
+      );
+
+      // Verify timers are suppressed
+      expect(backupState.getWaitSecondsFor('doc_backup_1'), isNull);
+      expect(backupState.getWaitSecondsFor('doc_backup_2'), isNull);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            foregroundScanStateProvider.overrideWithValue(backupState),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(
+              body: PendingAiScanBadge(
+                documentId: 'doc_backup_1',
+                isDark: true,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Waiting for Backup'), findsOneWidget);
+      expect(find.byIcon(Icons.cloud_upload_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.timer_outlined), findsNothing);
+    });
   });
 }

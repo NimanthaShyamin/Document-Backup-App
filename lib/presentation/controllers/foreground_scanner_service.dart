@@ -19,6 +19,7 @@ enum ScanStatus {
   idle,
   scanning,
   waitingRateLimit,
+  waitingBackup,
   offline,
 }
 
@@ -57,7 +58,7 @@ class ForegroundScanState {
   /// - 1st Queued Document (index 0): returns `baseSecondsRemaining` (ticking down from 60s).
   /// - Deep Queue Documents (index k): adds 60 seconds per position in the queue.
   int? getWaitSecondsFor(String docId) {
-    if (!isOnline || status == ScanStatus.offline) return null;
+    if (!isOnline || status == ScanStatus.offline || status == ScanStatus.waitingBackup) return null;
     if (isScanning(docId)) return 0;
 
     int index = pendingQueueIds.indexOf(docId);
@@ -150,14 +151,16 @@ class ForegroundScannerNotifier extends StateNotifier<ForegroundScanState> {
       _handleConnectivityChanged(hasConnection);
     });
 
-    // 2. Listen to Sync Engine state changes (e.g. SyncEngineOffline)
+    // 2. Listen to Sync Engine state changes (e.g. SyncEngineOffline, SyncEngineSyncing)
     _syncEngineSubscription = _ref.listen<AsyncValue<SyncEngineState>>(
       syncEngineStateProvider,
       (previous, next) {
         final syncState = next.valueOrNull;
         if (syncState is SyncEngineOffline) {
           _setOffline();
-        } else if (syncState != null) {
+        } else if (syncState is SyncEngineSyncing) {
+          _setWaitingBackup();
+        } else if (syncState is SyncEngineIdle || syncState is SyncEngineFailed) {
           _checkAndSetOnline();
         }
       },
@@ -219,11 +222,25 @@ class ForegroundScannerNotifier extends StateNotifier<ForegroundScanState> {
     );
   }
 
+  void _setWaitingBackup() {
+    if (!state.isOnline) return;
+    developer.log('[ForegroundScanner] Cloud backup active. Pausing AI scanning timers.');
+    _stopGlobalTimer();
+    if (_cooldownCompleter != null && !_cooldownCompleter!.isCompleted) {
+      _cooldownCompleter!.complete();
+    }
+    _currentBaseRemaining = 0;
+    state = state.copyWith(
+      status: ScanStatus.waitingBackup,
+      baseSecondsRemaining: 0,
+    );
+  }
+
   Future<void> _checkAndSetOnline() async {
     final online = await _checkIsOnline();
     if (online) {
-      if (!state.isOnline || state.status == ScanStatus.offline) {
-        developer.log('[ForegroundScanner] Device / app is online. Resuming sequential queue.');
+      if (!state.isOnline || state.status == ScanStatus.offline || state.status == ScanStatus.waitingBackup) {
+        developer.log('[ForegroundScanner] Device / app is online and backup idle. Resuming sequential queue.');
         state = state.copyWith(
           isOnline: true,
           status: ScanStatus.idle,
@@ -278,7 +295,7 @@ class ForegroundScannerNotifier extends StateNotifier<ForegroundScanState> {
     state = state.copyWith(pendingQueueIds: pendingIds);
 
     if (pending.isEmpty) {
-      if (state.status != ScanStatus.idle && state.isOnline) {
+      if (state.status != ScanStatus.idle && state.isOnline && state.status != ScanStatus.waitingBackup) {
         _stopGlobalTimer();
         state = state.copyWith(
           status: ScanStatus.idle,
@@ -367,7 +384,36 @@ class ForegroundScannerNotifier extends StateNotifier<ForegroundScanState> {
 
     try {
       while (state.isOnline) {
+        // Priority 1: Delay AI scan while cloud backup is actively syncing
+        final syncState = _ref.read(syncEngineStateProvider).valueOrNull;
+        final syncRepo = _ref.read(syncRepositoryProvider);
+        if (syncState is SyncEngineSyncing || syncRepo.isReconciling) {
+          developer.log('[ForegroundScanner] Sync engine is active. Pausing AI scan until backup ends.');
+          _stopGlobalTimer();
+          state = state.copyWith(status: ScanStatus.waitingBackup, baseSecondsRemaining: 0);
+          await Future.delayed(const Duration(seconds: 1));
+          continue;
+        }
+
         final db = _ref.read(appDatabaseProvider);
+
+        // Priority 2: Delay AI scan if documents are pending upload and Drive sync is configured
+        final authService = _ref.read(googleAuthServiceProvider);
+        if (authService.isSignedIn && syncState is! SyncEngineFailed) {
+          final pendingBackups = await (db.select(db.vehicleDocuments)
+                ..where((t) => t.syncStatus.isIn(['pending_upload', 'queued_upload']) & t.isDeleted.equals(false)))
+              .get();
+
+          if (pendingBackups.isNotEmpty) {
+            developer.log('[ForegroundScanner] Found ${pendingBackups.length} document(s) pending backup. Waiting for backup.');
+            _stopGlobalTimer();
+            state = state.copyWith(status: ScanStatus.waitingBackup, baseSecondsRemaining: 0);
+            unawaited(syncRepo.reconcileStartupDelta());
+            await Future.delayed(const Duration(seconds: 2));
+            continue;
+          }
+        }
+
         final apiKey = _ref.read(geminiApiKeyProvider);
 
         if (apiKey.trim().isEmpty) {
@@ -379,7 +425,7 @@ class ForegroundScannerNotifier extends StateNotifier<ForegroundScanState> {
 
         // Query pending documents from Drift DB, ordered strictly by oldest imported sequence first
         final pendingDocs = await (db.select(db.vehicleDocuments)
-              ..where((t) => t.requiresAiScan.equals(true))
+              ..where((t) => t.requiresAiScan.equals(true) & t.isDeleted.equals(false))
               ..orderBy([(t) => OrderingTerm(expression: t.createdAt, mode: OrderingMode.asc)]))
             .get();
 

@@ -107,6 +107,8 @@ class AppDatabase extends _$AppDatabase {
           }
         },
         beforeOpen: (details) async {
+          await customStatement('PRAGMA journal_mode = WAL;');
+          await customStatement('PRAGMA busy_timeout = 10000;');
           await customStatement('PRAGMA foreign_keys = ON;');
         },
       );
