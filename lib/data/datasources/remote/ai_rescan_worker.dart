@@ -7,7 +7,9 @@ import 'package:drift/drift.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 
+import '../../../core/hardware/notification_engine.dart';
 import '../../../core/theme/app_preferences_provider.dart';
+import '../../../domain/entities/document_type.dart';
 import '../local/app_database.dart';
 import 'gemini_document_extraction_service.dart';
 
@@ -89,9 +91,16 @@ class AiRescanWorker {
           ),
         );
       } else {
-        // 5. Run Gemini Extraction
+        // 5. Run Gemini Extraction with user draft reconciliation
         final extractionService = GeminiDocumentExtractionService(apiKey: key);
-        final extracted = await extractionService.extractDetailsFromFile(localFile);
+        final extracted = await extractionService.extractDetailsFromFile(
+          localFile,
+          userDraftTitle: docToProcess.title,
+          userDraftCategory: docToProcess.category,
+          userDraftExpiryDate: docToProcess.expiryDate != null
+              ? DateTime.fromMillisecondsSinceEpoch(docToProcess.expiryDate!)
+              : null,
+        );
 
         if (extracted.isAiDetected) {
           developer.log('[AiRescanWorker] AI extraction successful for ${docToProcess.id}. Updating database.');
@@ -111,27 +120,37 @@ class AiRescanWorker {
               ? extracted.category!
               : docToProcess.category;
 
-          final effectiveTitle = (extracted.title != null &&
-                  extracted.title!.isNotEmpty &&
-                  (docToProcess.title.isEmpty ||
-                      docToProcess.title == 'Untitled Document' ||
-                      docToProcess.title == 'General Document' ||
-                      docToProcess.title.toLowerCase().contains('scan')))
-              ? extracted.title!
+          final effectiveDocType = extracted.documentType?.value ??
+              (extracted.category != null ? DocumentType.fromString(extracted.category!).value : docToProcess.documentType);
+
+          final effectiveTitle = (extracted.title != null && extracted.title!.trim().isNotEmpty)
+              ? extracted.title!.trim()
               : docToProcess.title;
 
-          final effectiveExpiry = extracted.expiryDate != null
-              ? extracted.expiryDate!.millisecondsSinceEpoch
-              : docToProcess.expiryDate;
+          // When AI successfully detects the document, use AI-verified expiry date.
+          // If the document has no expiration (e.g. Student ID, birth certificate, photo),
+          // extracted.expiryDate is null, which properly clears any user-entered erroneous expiry date.
+          final effectiveExpiry = extracted.expiryDate?.millisecondsSinceEpoch;
 
           final effectiveHidden = (extracted.hiddenContext != null && extracted.hiddenContext!.isNotEmpty)
               ? extracted.hiddenContext
               : docToProcess.hiddenContext;
 
+          final effectiveRegNo = (extracted.vehicleRegNo != null && extracted.vehicleRegNo!.isNotEmpty)
+              ? extracted.vehicleRegNo!
+              : docToProcess.vehicleRegNo;
+
+          final effectivePolicyNo = (extracted.policyNo != null && extracted.policyNo!.isNotEmpty)
+              ? extracted.policyNo!
+              : docToProcess.policyNo;
+
           await (db.update(db.vehicleDocuments)..where((t) => t.id.equals(docToProcess.id))).write(
             VehicleDocumentsCompanion(
               category: Value(effectiveCategory),
+              documentType: Value(effectiveDocType),
               title: Value(effectiveTitle),
+              vehicleRegNo: Value(effectiveRegNo),
+              policyNo: Value(effectivePolicyNo),
               expiryDate: Value(effectiveExpiry),
               visibleFields: Value(jsonEncode(mergedVisible)),
               hiddenContext: Value(effectiveHidden),
@@ -139,6 +158,20 @@ class AiRescanWorker {
               lastModifiedTimestamp: Value(DateTime.now().millisecondsSinceEpoch),
             ),
           );
+
+          try {
+            final notifEngine = LocalNotificationEngine.instance;
+            if (effectiveExpiry != null) {
+              await notifEngine.scheduleExpiryAlerts(
+                documentId: docToProcess.id,
+                title: effectiveTitle,
+                vehicleRegNo: effectiveRegNo,
+                expiryDate: DateTime.fromMillisecondsSinceEpoch(effectiveExpiry),
+              );
+            } else if (docToProcess.expiryDate != null) {
+              await notifEngine.cancelDocumentAlerts(docToProcess.id);
+            }
+          } catch (_) {}
         } else if (extracted.errorMessage == null) {
           // Extraction completed cleanly without errors, but no details recognized
           developer.log('[AiRescanWorker] AI scan found no metadata for ${docToProcess.id}. Clearing pending flag.');

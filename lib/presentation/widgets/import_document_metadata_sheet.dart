@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:ui';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -12,6 +13,7 @@ import '../../data/datasources/remote/gemini_document_extraction_service.dart';
 import '../../domain/entities/document_category.dart';
 import '../../domain/entities/document_type.dart';
 import '../controllers/document_providers.dart';
+import '../controllers/foreground_scanner_service.dart';
 
 /// Bottom sheet dialog for reviewing, editing, and confirming imported document metadata.
 /// Refactored to strictly present a clean 3-field layout (Title, Category, Expiry Date),
@@ -73,6 +75,7 @@ class _ImportDocumentMetadataSheetState
   String? _hiddenContext;
 
   bool _isGeminiAnalyzing = true;
+  bool _isDeviceOffline = false;
   bool _geminiAttempted = false;
   bool _geminiFoundDetails = false;
   bool _requiresAiScan = true;
@@ -92,10 +95,30 @@ class _ImportDocumentMetadataSheetState
 
     _titleController.addListener(_clearValidationError);
 
-    // Run Gemini AI extraction in post-frame callback
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _analyzeWithGemini();
-    });
+    // Initial check: if already known to be offline from scanner state, don't show analyzing spinner
+    bool initialOffline = false;
+    try {
+      final scanState = ref.read(foregroundScanStateProvider);
+      if (!scanState.isOnline || scanState.status == ScanStatus.offline) {
+        initialOffline = true;
+      }
+    } catch (_) {}
+
+    if (initialOffline) {
+      _isGeminiAnalyzing = false;
+      _isDeviceOffline = true;
+      _geminiAttempted = true;
+      _geminiFoundDetails = false;
+      _requiresAiScan = true;
+      _geminiStatusMessage =
+          'You are currently offline. Enter document details manually below. Your document will be securely saved and verified by Gemini AI once online.';
+    } else {
+      _isGeminiAnalyzing = true;
+      // Run Gemini AI extraction in post-frame callback
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _analyzeWithGemini();
+      });
+    }
   }
 
   void _clearValidationError() {
@@ -112,6 +135,41 @@ class _ImportDocumentMetadataSheetState
   }
 
   Future<void> _analyzeWithGemini() async {
+    if (_isDeviceOffline) return;
+
+    // Proactive Connectivity Check before attempting Gemini scan
+    bool isOffline = false;
+    try {
+      final scanState = ref.read(foregroundScanStateProvider);
+      if (!scanState.isOnline || scanState.status == ScanStatus.offline) {
+        isOffline = true;
+      }
+    } catch (_) {}
+
+    if (!isOffline && !Platform.environment.containsKey('FLUTTER_TEST')) {
+      try {
+        final connectivityResult = await Connectivity().checkConnectivity();
+        if (connectivityResult.every((r) => r == ConnectivityResult.none)) {
+          isOffline = true;
+        }
+      } catch (_) {}
+    }
+
+    if (isOffline) {
+      if (mounted) {
+        setState(() {
+          _isGeminiAnalyzing = false;
+          _isDeviceOffline = true;
+          _geminiAttempted = true;
+          _geminiFoundDetails = false;
+          _requiresAiScan = true;
+          _geminiStatusMessage =
+              'You are currently offline. Enter document details manually below. Your document will be securely saved and verified by Gemini AI once online.';
+        });
+      }
+      return;
+    }
+
     var geminiService = ref.read(geminiDocumentExtractionServiceProvider);
 
     if (!geminiService.isConfigured) {
@@ -173,22 +231,40 @@ class _ImportDocumentMetadataSheetState
               'Gemini AI auto-detected document metadata. You may verify and edit any field below.';
         });
       } else {
+        final cleanMsg = details.errorMessage != null
+            ? GeminiDocumentExtractionService.sanitizeErrorMessage(details.errorMessage!)
+            : null;
+        final isNetwork = cleanMsg != null &&
+            (cleanMsg.toLowerCase().contains('offline') ||
+                cleanMsg.toLowerCase().contains('network') ||
+                cleanMsg.toLowerCase().contains('connection error') ||
+                cleanMsg.toLowerCase().contains('socket'));
+
         setState(() {
+          _isDeviceOffline = isNetwork;
           _geminiAttempted = true;
           _geminiFoundDetails = false;
           _requiresAiScan = true;
-          _geminiStatusMessage = details.errorMessage ??
-              'Gemini could not detect details from this document. Please enter the details manually below.';
+          _geminiStatusMessage = isNetwork
+              ? 'Internet connection unavailable. Enter document details manually below. Your document will be securely saved and verified by Gemini AI once online.'
+              : (cleanMsg ??
+                  'Gemini could not detect details from this document. Please enter the details manually below.');
         });
       }
     } catch (e) {
       if (mounted) {
+        final cleanMsg = GeminiDocumentExtractionService.sanitizeErrorMessage(e.toString());
+        final isNetwork = cleanMsg.toLowerCase().contains('network') ||
+            cleanMsg.toLowerCase().contains('offline') ||
+            e.toString().toLowerCase().contains('socket');
         setState(() {
+          _isDeviceOffline = isNetwork;
           _geminiAttempted = true;
           _geminiFoundDetails = false;
           _requiresAiScan = true;
-          _geminiStatusMessage =
-              'Gemini scanning encountered an issue ($e). Please manually enter document details below.';
+          _geminiStatusMessage = isNetwork
+              ? 'Internet connection unavailable. Enter document details manually below. Your document will be securely saved and verified by Gemini AI once online.'
+              : cleanMsg;
         });
       }
     } finally {
@@ -830,6 +906,53 @@ class _ImportDocumentMetadataSheetState
                     fontWeight: FontWeight.w600,
                   ),
                 ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_isDeviceOffline) {
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.amber.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.amberAccent.withValues(alpha: 0.4), width: 1.2),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(
+              Icons.cloud_off_rounded,
+              color: LiquidGlassTheme.accentAmber,
+              size: 22,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Offline Mode — Manual Entry',
+                    style: TextStyle(
+                      color: LiquidGlassTheme.accentAmber,
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    _geminiStatusMessage ??
+                        'You are currently offline. Enter document details manually below. Your document will be securely saved and verified by Gemini AI once online.',
+                    style: TextStyle(
+                      color: isDark ? Colors.white70 : const Color(0xFF334155),
+                      fontSize: 11,
+                      height: 1.3,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],

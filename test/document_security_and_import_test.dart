@@ -9,6 +9,7 @@ import 'package:vehicle_document_vault/domain/entities/sync_status.dart';
 import 'package:vehicle_document_vault/domain/entities/vehicle_document.dart';
 import 'package:vehicle_document_vault/domain/repositories/i_vehicle_document_repository.dart';
 import 'package:vehicle_document_vault/presentation/controllers/document_providers.dart';
+import 'package:vehicle_document_vault/presentation/controllers/foreground_scanner_service.dart';
 import 'package:vehicle_document_vault/presentation/screens/document_list_screen.dart';
 import 'package:vehicle_document_vault/presentation/screens/settings_screen.dart';
 import 'package:vehicle_document_vault/presentation/widgets/import_document_metadata_sheet.dart';
@@ -125,6 +126,9 @@ class FakeVehicleDocumentRepository implements IVehicleDocumentRepository {
 
 class FakeGeminiService extends GeminiDocumentExtractionService {
   final ExtractedDocumentDetails detailsToReturn;
+  String? lastUserDraftTitle;
+  String? lastUserDraftCategory;
+  DateTime? lastUserDraftExpiryDate;
 
   FakeGeminiService(this.detailsToReturn) : super(apiKey: 'AIzaSyMockKey');
 
@@ -132,7 +136,15 @@ class FakeGeminiService extends GeminiDocumentExtractionService {
   bool get isConfigured => true;
 
   @override
-  Future<ExtractedDocumentDetails> extractDetailsFromFile(File file) async {
+  Future<ExtractedDocumentDetails> extractDetailsFromFile(
+    File file, {
+    String? userDraftTitle,
+    String? userDraftCategory,
+    DateTime? userDraftExpiryDate,
+  }) async {
+    lastUserDraftTitle = userDraftTitle;
+    lastUserDraftCategory = userDraftCategory;
+    lastUserDraftExpiryDate = userDraftExpiryDate;
     return detailsToReturn;
   }
 }
@@ -462,6 +474,87 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Edited SLIC Insurance'), findsOneWidget);
+    });
+
+    test('GeminiDocumentExtractionService.sanitizeErrorMessage redacts API keys and formats socket errors', () {
+      const rawWithKey = 'ClientException with SocketException: uri=https://generativelanguage.googleapis.com/v1beta/models/gemini:generateContent?key=AIzaSyDGRG4m-vb_H8_dONgkgit32_YuPI78kc4';
+      final sanitized = GeminiDocumentExtractionService.sanitizeErrorMessage(rawWithKey);
+
+      expect(sanitized.contains('AIzaSyDGRG4m-vb_H8_dONgkgit32_YuPI78kc4'), isFalse);
+      expect(sanitized, contains('Network connection error: Device is offline or server cannot be reached.'));
+
+      const rawOtherError = 'Something failed with key=AIzaSy123456789 in request';
+      final sanitizedOther = GeminiDocumentExtractionService.sanitizeErrorMessage(rawOtherError);
+      expect(sanitizedOther.contains('AIzaSy123456789'), isFalse);
+      expect(sanitizedOther, contains('[REDACTED]'));
+    });
+
+    testWidgets('When device is offline, ImportDocumentMetadataSheet renders Offline Mode Manual Entry', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 2.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      const offlineScanState = ForegroundScanState(
+        status: ScanStatus.offline,
+        isOnline: false,
+      );
+      final fakeRepo = FakeVehicleDocumentRepository([]);
+
+      final tempFile = File('${Directory.systemTemp.path}/test_offline_doc.png');
+      if (!tempFile.existsSync()) {
+        tempFile.writeAsStringSync('offline content');
+      }
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            foregroundScanStateProvider.overrideWithValue(offlineScanState),
+            vehicleDocumentRepositoryProvider.overrideWithValue(fakeRepo),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: Builder(
+                builder: (context) => ElevatedButton(
+                  onPressed: () {
+                    ImportDocumentMetadataSheet.show(
+                      context: context,
+                      sourceFile: tempFile,
+                      originalName: 'Student_ID.pdf',
+                      extension: 'pdf',
+                      fileSize: 1024,
+                    );
+                  },
+                  child: const Text('Open Sheet'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Open Sheet'));
+      await tester.pumpAndSettle();
+
+      // Verify the clean Offline Mode banner is displayed
+      expect(find.text('Offline Mode — Manual Entry'), findsOneWidget);
+      expect(find.byIcon(Icons.cloud_off_rounded), findsOneWidget);
+      expect(find.textContaining('You are currently offline'), findsOneWidget);
+
+      // Verify no technical error, no API key, and no analyzing spinner
+      expect(find.textContaining('SocketException'), findsNothing);
+      expect(find.textContaining('key='), findsNothing);
+      expect(find.textContaining('Analyzing document with Gemini AI'), findsNothing);
+
+      // Verify user can manually type title and select category
+      final titleField = find.widgetWithText(TextField, 'Document Title *');
+      expect(titleField, findsOneWidget);
+      await tester.enterText(titleField, 'ttttt');
+      await tester.pumpAndSettle();
+      expect(find.text('ttttt'), findsOneWidget);
     });
   });
 }

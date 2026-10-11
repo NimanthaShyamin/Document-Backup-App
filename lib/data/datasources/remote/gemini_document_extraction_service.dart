@@ -49,7 +49,7 @@ class ExtractedDocumentDetails {
     return ExtractedDocumentDetails(
       isAiDetected: false,
       requiresAiScan: true,
-      errorMessage: message,
+      errorMessage: GeminiDocumentExtractionService.sanitizeErrorMessage(message),
     );
   }
 
@@ -151,8 +151,49 @@ class GeminiDocumentExtractionService {
     return candidates;
   }
 
+  /// Sanitizes raw error strings, stripping private API keys and transforming socket/network exceptions into friendly messages.
+  static String sanitizeErrorMessage(String? raw) {
+    if (raw == null || raw.isEmpty) return 'An unexpected error occurred.';
+
+    final lower = raw.toLowerCase();
+    if (lower.contains('socketexception') ||
+        lower.contains('failed host lookup') ||
+        lower.contains('no address associated with hostname') ||
+        lower.contains('network is unreachable') ||
+        lower.contains('connection refused') ||
+        lower.contains('connection reset') ||
+        lower.contains('clientexception with socketexception') ||
+        lower.contains('handshakeexception')) {
+      return 'Network connection error: Device is offline or server cannot be reached.';
+    }
+
+    if (lower.contains('timeout') || lower.contains('timed out')) {
+      return 'Connection timed out. Please check your internet connection.';
+    }
+
+    if (lower.contains('resource_exhausted') || lower.contains('429') || lower.contains('quota exceeded')) {
+      return 'Gemini API quota exceeded (Rate limit / 429). Will retry after cooldown.';
+    }
+
+    if (lower.contains('api_key_invalid') || lower.contains('api key not valid') || lower.contains('invalid api key')) {
+      return 'Invalid Gemini API key. Please verify your key in Settings.';
+    }
+
+    // Strip private API key query parameter: key=AIza... or key=xxx
+    var cleaned = raw.replaceAll(RegExp(r'key=[a-zA-Z0-9_\-]+'), 'key=[REDACTED]');
+    // Also strip any full uri=https://... references if they exist
+    cleaned = cleaned.replaceAll(RegExp(r'uri=https?://[^\s,\)]+'), '');
+    return cleaned.trim();
+  }
+
   /// Analyzes the given document file using Gemini AI and returns extracted metadata.
-  Future<ExtractedDocumentDetails> extractDetailsFromFile(File file) async {
+  /// Optionally accepts user draft fields entered offline for intelligent reconciliation.
+  Future<ExtractedDocumentDetails> extractDetailsFromFile(
+    File file, {
+    String? userDraftTitle,
+    String? userDraftCategory,
+    DateTime? userDraftExpiryDate,
+  }) async {
     final effectiveKey = apiKey?.trim();
 
     if (effectiveKey == null || effectiveKey.isEmpty) {
@@ -166,12 +207,12 @@ class GeminiDocumentExtractionService {
       final bytes = await file.readAsBytes();
       final mimeType = _determineMimeType(file.path);
 
-      const prompt = '''
+      String prompt = '''
 You are an advanced, universal AI document analyzer and vision perception engine.
-Analyze this image or document (which can be an invoice, ID card, driving license, vehicle document, ticket, bill, certificate, receipt, warranty card, general photograph, or any other visual media) and extract structured metadata:
+Analyze this image or document (which can be an invoice, ID card, student ID, driving license, vehicle document, ticket, bill, certificate, receipt, warranty card, general photograph, or any other visual media) and extract structured metadata:
 
 1. "category": Intelligently decide the category. Prioritize matching one of these standard preset IDs if appropriate:
-   - "id_card" (National ID, Passport, Residence Permit)
+   - "id_card" (National ID, Passport, Residence Permit, Student ID)
    - "driving_license" (Driving License / Driver's Permit)
    - "vehicle" (Vehicle Registration, Ownership, CR, Logbook)
    - "bill" (Utility Bill, Tax Assessment, Invoice, Receipt)
@@ -185,7 +226,7 @@ Analyze this image or document (which can be an invoice, ID card, driving licens
    If none fit, provide a concise, clean lowercase snake_case category name.
 
 2. "title": A descriptive, clean, official title for the document or image:
-   - For documents: Official title (e.g. "National Identity Card", "Comprehensive Motor Insurance", "Laptop Purchase Invoice & Warranty", "Electricity Utility Bill", "Sri Lanka Driving License", "Qatar Airways Flight Ticket").
+   - For documents: Official title (e.g. "National Identity Card", "Student Identity Card", "Comprehensive Motor Insurance", "Laptop Purchase Invoice & Warranty", "Electricity Utility Bill", "Sri Lanka Driving License", "Qatar Airways Flight Ticket").
    - For non-document photos (visual fallback): Describe what you see in a brief descriptive topic (e.g. "Photo of a Sunset", "Portrait of a Man", "Golden Retriever Dog").
 
 3. "expiry_date": The true expiry date, valid-until date, travel date, or payment due date formatted strictly as "YYYY-MM-DD" (or null if the document does not expire or is a general photo).
@@ -225,6 +266,42 @@ Analyze this image or document (which can be an invoice, ID card, driving licens
      - Leave "expiry_date" as null.
      - Keep "dynamic_visible_fields" minimal or empty [].
      - Describe what you see in "hidden_context".
+''';
+
+      final hasDraftTitle = userDraftTitle != null && userDraftTitle.trim().isNotEmpty;
+      final hasDraftCategory = userDraftCategory != null && userDraftCategory.trim().isNotEmpty;
+      final hasDraftExpiry = userDraftExpiryDate != null;
+
+      if (hasDraftTitle || hasDraftCategory || hasDraftExpiry) {
+        prompt += '''
+
+7. User Draft Reconciliation & Error Re-Correction:
+The user previously saved this document in offline/draft mode with the following tentative details:
+\${hasDraftTitle ? '- User-Entered Draft Title: "$userDraftTitle"' : ''}
+\${hasDraftCategory ? '- User-Entered Draft Category: "$userDraftCategory"' : ''}
+\${hasDraftExpiry ? '- User-Entered Draft Expiry Date: "\${userDraftExpiryDate.toIso8601String().split('T').first}"' : ''}
+
+Reconcile these user-entered values against the actual document content:
+- Document Title:
+  * Check whether the user draft title is meaningful and relevant to what the document actually is:
+    a) If the user draft title is meaningless, gibberish (e.g. repeated characters like "ttttt", "aaaa", "asdf", random keystrokes), a generic placeholder ("Untitled", "Document", "New Scan", "test"), or completely incompatible/unrelated to what the document actually is:
+       Completely DISCARD the user draft title. Recreate a brand new, accurate, professional, and descriptive title based strictly on what the document actually is (e.g. "Student Identity Card", "National Identity Card", "Vehicle Registration Certificate").
+    b) If the user draft title is relevant or partially matches the document topic (e.g. user typed "Student ID", "My Driving License", "Electricity Bill", "University Card"):
+       Respect the user's intent, and update/enrich it by appending or inserting missing specific details from the document (e.g. if user typed "Student ID", update to "Student Identity Card - [Institution/Name]"; if user typed "Car License", update to "Revenue License - WP CAB-1234").
+    * Output the final resolved title in "title".
+- Document Category:
+  * If the user draft category is wrong or incompatible with the document (e.g. user selected "revenue_license" or "vehicle" for a Student ID, National ID, Educational Certificate, or Receipt):
+    Re-correct the category to the true, accurate category from the preset list (e.g. "id_card", "certificate", "bill", "e_ticket", "photo", "general").
+  * Output the accurate category in "category".
+- Expiry Date:
+  * Accurately determine whether this document truly has an expiration date:
+    - If it has an expiration date, output it formatted as "YYYY-MM-DD".
+    - If the document does NOT expire (e.g. student ID with no expiration, birth certificate, diploma, general photo, non-expiring ID):
+      Set "expiry_date" strictly to null. Do NOT retain the user's mistaken draft expiry date.
+''';
+      }
+
+      prompt += '''
 
 Return ONLY a valid JSON object without markdown fences, following this exact schema:
 {

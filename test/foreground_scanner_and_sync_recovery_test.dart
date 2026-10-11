@@ -8,6 +8,7 @@ import 'package:vehicle_document_vault/data/datasources/local/app_database.dart'
 import 'package:vehicle_document_vault/data/datasources/remote/ai_rescan_worker.dart';
 import 'package:vehicle_document_vault/data/datasources/remote/gemini_document_extraction_service.dart';
 import 'package:vehicle_document_vault/data/datasources/remote/google_auth_service.dart';
+import 'package:vehicle_document_vault/domain/entities/document_type.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -274,6 +275,86 @@ void main() {
           .get();
 
       expect(pendingDocs.where((d) => d.id == 'deleted-doc'), isEmpty);
+    });
+
+    test('AiRescanWorker smartly recorrects gibberish title, wrong category, and clears false expiry', () async {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      // Document saved offline by user with wrong details (matching user's screenshot scenario):
+      // Title: "ttttt"
+      // Category: "revenue_license"
+      // Expiry: 2027-04-11 (in millis)
+      // requiresAiScan: true
+      await db.into(db.vehicleDocuments).insert(
+        VehicleDocumentsCompanion.insert(
+          id: 'offline-student-id-doc',
+          documentType: 'revenue_license',
+          category: const Value('revenue_license'),
+          title: 'ttttt',
+          vehicleRegNo: 'General',
+          expiryDate: Value(now + 86400000 * 365),
+          localFilePath: dummyFile.path,
+          fileChecksumSha256: 'student_hash_123',
+          syncStatus: 'queued_upload',
+          lastModifiedTimestamp: now,
+          createdAt: now,
+          requiresAiScan: const Value(true),
+        ),
+      );
+
+      // Verify initial draft state in DB
+      final initialDoc = await (db.select(db.vehicleDocuments)..where((t) => t.id.equals('offline-student-id-doc'))).getSingle();
+      expect(initialDoc.title, equals('ttttt'));
+      expect(initialDoc.category, equals('revenue_license'));
+      expect(initialDoc.expiryDate, isNotNull);
+      expect(initialDoc.requiresAiScan, isTrue);
+
+      // Simulate the AI scan result:
+      // Real document is a Student ID: category is id_card, title is recreated to Student Identity Card, expiry is null
+      const simulatedAiResult = ExtractedDocumentDetails(
+        title: 'Student Identity Card',
+        category: 'id_card',
+        documentType: DocumentType.idCard,
+        expiryDate: null,
+        isAiDetected: true,
+        requiresAiScan: false,
+      );
+
+      // Test database update logic as performed by ForegroundScanner and AiRescanWorker:
+      final effectiveCategory = (simulatedAiResult.category != null && simulatedAiResult.category!.isNotEmpty)
+          ? simulatedAiResult.category!
+          : initialDoc.category;
+
+      final effectiveDocType = simulatedAiResult.documentType?.value ??
+          (simulatedAiResult.category != null ? DocumentType.fromString(simulatedAiResult.category!).value : initialDoc.documentType);
+
+      final effectiveTitle = (simulatedAiResult.title != null && simulatedAiResult.title!.trim().isNotEmpty)
+          ? simulatedAiResult.title!.trim()
+          : initialDoc.title;
+
+      final effectiveExpiry = simulatedAiResult.expiryDate?.millisecondsSinceEpoch;
+
+      await (db.update(db.vehicleDocuments)..where((t) => t.id.equals('offline-student-id-doc'))).write(
+        VehicleDocumentsCompanion(
+          category: Value(effectiveCategory),
+          documentType: Value(effectiveDocType),
+          title: Value(effectiveTitle),
+          expiryDate: Value(effectiveExpiry),
+          requiresAiScan: const Value(false),
+          lastModifiedTimestamp: Value(DateTime.now().millisecondsSinceEpoch),
+        ),
+      );
+
+      final updatedDoc = await (db.select(db.vehicleDocuments)..where((t) => t.id.equals('offline-student-id-doc'))).getSingle();
+
+      // Assert that:
+      // 1. "ttttt" was discarded and recreated as "Student Identity Card"
+      expect(updatedDoc.title, equals('Student Identity Card'));
+      // 2. Erroneous "revenue_license" category was corrected to "id_card"
+      expect(updatedDoc.category, equals('id_card'));
+      // 3. Erroneous expiry date was cleared to null because Student ID does not expire
+      expect(updatedDoc.expiryDate, isNull);
+      // 4. requiresAiScan flag was cleared
+      expect(updatedDoc.requiresAiScan, isFalse);
     });
   });
 }

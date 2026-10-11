@@ -7,9 +7,11 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:drift/drift.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/hardware/notification_engine.dart';
 import '../../core/theme/app_preferences_provider.dart';
 import '../../data/datasources/local/app_database.dart';
 import '../../data/datasources/remote/gemini_document_extraction_service.dart';
+import '../../domain/entities/document_type.dart';
 import '../../domain/entities/sync_status.dart';
 import '../../domain/entities/vehicle_document.dart';
 import 'document_providers.dart';
@@ -530,7 +532,14 @@ class ForegroundScannerNotifier extends StateNotifier<ForegroundScanState> {
 
     try {
       final extractionService = GeminiDocumentExtractionService(apiKey: apiKey);
-      final extracted = await extractionService.extractDetailsFromFile(file).timeout(
+      final extracted = await extractionService.extractDetailsFromFile(
+        file,
+        userDraftTitle: docData.title,
+        userDraftCategory: docData.category,
+        userDraftExpiryDate: docData.expiryDate != null
+            ? DateTime.fromMillisecondsSinceEpoch(docData.expiryDate!)
+            : null,
+      ).timeout(
         const Duration(seconds: 45),
         onTimeout: () => ExtractedDocumentDetails.error('Scan timed out after 45 seconds.'),
       );
@@ -553,27 +562,37 @@ class ForegroundScannerNotifier extends StateNotifier<ForegroundScanState> {
             ? extracted.category!
             : docData.category;
 
-        final effectiveTitle = (extracted.title != null &&
-                extracted.title!.isNotEmpty &&
-                (docData.title.isEmpty ||
-                    docData.title == 'Untitled Document' ||
-                    docData.title == 'General Document' ||
-                    docData.title.toLowerCase().contains('scan')))
-            ? extracted.title!
+        final effectiveDocType = extracted.documentType?.value ??
+            (extracted.category != null ? DocumentType.fromString(extracted.category!).value : docData.documentType);
+
+        final effectiveTitle = (extracted.title != null && extracted.title!.trim().isNotEmpty)
+            ? extracted.title!.trim()
             : docData.title;
 
-        final effectiveExpiry = extracted.expiryDate != null
-            ? extracted.expiryDate!.millisecondsSinceEpoch
-            : docData.expiryDate;
+        // When AI successfully detects the document, use AI-verified expiry date.
+        // If the document has no expiration (e.g. Student ID, birth certificate, photo),
+        // extracted.expiryDate is null, which properly clears any user-entered erroneous expiry date.
+        final effectiveExpiry = extracted.expiryDate?.millisecondsSinceEpoch;
 
         final effectiveHidden = (extracted.hiddenContext != null && extracted.hiddenContext!.isNotEmpty)
             ? extracted.hiddenContext
             : docData.hiddenContext;
 
+        final effectiveRegNo = (extracted.vehicleRegNo != null && extracted.vehicleRegNo!.isNotEmpty)
+            ? extracted.vehicleRegNo!
+            : docData.vehicleRegNo;
+
+        final effectivePolicyNo = (extracted.policyNo != null && extracted.policyNo!.isNotEmpty)
+            ? extracted.policyNo!
+            : docData.policyNo;
+
         await (db.update(db.vehicleDocuments)..where((t) => t.id.equals(docData.id))).write(
           VehicleDocumentsCompanion(
             category: Value(effectiveCategory),
+            documentType: Value(effectiveDocType),
             title: Value(effectiveTitle),
+            vehicleRegNo: Value(effectiveRegNo),
+            policyNo: Value(effectivePolicyNo),
             expiryDate: Value(effectiveExpiry),
             visibleFields: Value(jsonEncode(mergedVisible)),
             hiddenContext: Value(effectiveHidden),
@@ -581,6 +600,20 @@ class ForegroundScannerNotifier extends StateNotifier<ForegroundScanState> {
             lastModifiedTimestamp: Value(DateTime.now().millisecondsSinceEpoch),
           ),
         );
+
+        try {
+          final notifEngine = LocalNotificationEngine.instance;
+          if (effectiveExpiry != null) {
+            await notifEngine.scheduleExpiryAlerts(
+              documentId: docData.id,
+              title: effectiveTitle,
+              vehicleRegNo: effectiveRegNo,
+              expiryDate: DateTime.fromMillisecondsSinceEpoch(effectiveExpiry),
+            );
+          } else if (docData.expiryDate != null) {
+            await notifEngine.cancelDocumentAlerts(docData.id);
+          }
+        } catch (_) {}
       } else if (extracted.errorMessage == null) {
         developer.log('[ForegroundScanner] Scan completed with no metadata detected for ${docData.id}. Clearing flag.');
         _scanAttempts.remove(docData.id);

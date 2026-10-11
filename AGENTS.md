@@ -177,4 +177,29 @@ Whenever modifying the codebase or adding new features:
    - Recognize 2-letter province prefixes (`WP`, `SP`, `NP`, `CP`, `EP`, `NW`, `NC`, `SG`, `UP`).
    - Extract core vehicle registration cleanly (e.g. `"CAB-1234"`) and note province separately in visible fields.
    - Include both the core number and province-prefixed variants in `"hidden_context"` for seamless search indexing.
+4. **Smart Draft Reconciliation & Error Re-Correction**:
+   - When documents are imported offline with tentative metadata, Gemini is passed the draft details (`userDraftTitle`, `userDraftCategory`, `userDraftExpiryDate`).
+   - Discard gibberish, meaningless (e.g. `"ttttt"`, `"aaaa"`), or placeholder titles and recreate a brand new compatible title based strictly on document content.
+   - For matching/relevant user titles, enhance them with missing details (e.g. `"Student ID"` -> `"Student Identity Card - University of Colombo"`).
+   - Re-correct mismatched categories to the true category.
+   - Clear erroneous user expiry dates when documents do not expire (`expiry_date: null`).
+
+---
+
+## 9. Offline Import UI Discipline & API Key Redaction
+
+### Rule
+**Never run AI scan spinners or attempt network connections when offline. Never leak private API keys or socket stack traces in the UI.**
+
+### Implementation Requirements
+1. In `lib/presentation/widgets/import_document_metadata_sheet.dart`:
+   - Inspect offline status in `initState` and `_analyzeWithGemini()` using `foregroundScanStateProvider` and `Connectivity()`.
+   - When offline, do NOT show "Analyzing document with Gemini AI..." spinner.
+   - Display `"Offline Mode — Manual Entry"` banner with `Icons.cloud_off_rounded`.
+   - Retain complete user editability so documents can be saved with `requiresAiScan = true`.
+2. In `lib/data/datasources/remote/gemini_document_extraction_service.dart`:
+   - `sanitizeErrorMessage()` must sanitize all error strings before returning in `ExtractedDocumentDetails.error`.
+   - Strictly strip `key=[a-zA-Z0-9_\-]+` and replace with `key=[REDACTED]`.
+   - Map `SocketException` / `ClientException with SocketException` to friendly offline messages.
+
 
