@@ -100,14 +100,23 @@ class AiRescanWorker {
           userDraftExpiryDate: docToProcess.expiryDate != null
               ? DateTime.fromMillisecondsSinceEpoch(docToProcess.expiryDate!)
               : null,
+        ).timeout(
+          const Duration(seconds: 90),
+          onTimeout: () => ExtractedDocumentDetails.error('AI scan timed out after 90 seconds.'),
         );
 
         if (extracted.isAiDetected) {
           developer.log('[AiRescanWorker] AI extraction successful for ${docToProcess.id}. Updating database.');
 
+          final effectiveCategory = (extracted.category != null && extracted.category!.isNotEmpty)
+              ? extracted.category!
+              : docToProcess.category;
+
+          final isPhoto = effectiveCategory == 'photo' || effectiveCategory == 'image';
+
           // Merge visible fields
           Map<String, dynamic> mergedVisible = {};
-          if (docToProcess.visibleFields.isNotEmpty) {
+          if (!isPhoto && docToProcess.visibleFields.isNotEmpty) {
             try {
               mergedVisible = jsonDecode(docToProcess.visibleFields) as Map<String, dynamic>;
             } catch (_) {}
@@ -115,10 +124,6 @@ class AiRescanWorker {
           if (extracted.visibleFields.isNotEmpty) {
             mergedVisible.addAll(extracted.visibleFields);
           }
-
-          final effectiveCategory = (extracted.category != null && extracted.category!.isNotEmpty)
-              ? extracted.category!
-              : docToProcess.category;
 
           final effectiveDocType = extracted.documentType?.value ??
               (extracted.category != null ? DocumentType.fromString(extracted.category!).value : docToProcess.documentType);
@@ -130,19 +135,23 @@ class AiRescanWorker {
           // When AI successfully detects the document, use AI-verified expiry date.
           // If the document has no expiration (e.g. Student ID, birth certificate, photo),
           // extracted.expiryDate is null, which properly clears any user-entered erroneous expiry date.
-          final effectiveExpiry = extracted.expiryDate?.millisecondsSinceEpoch;
+          final effectiveExpiry = isPhoto ? null : extracted.expiryDate?.millisecondsSinceEpoch;
 
           final effectiveHidden = (extracted.hiddenContext != null && extracted.hiddenContext!.isNotEmpty)
               ? extracted.hiddenContext
               : docToProcess.hiddenContext;
 
-          final effectiveRegNo = (extracted.vehicleRegNo != null && extracted.vehicleRegNo!.isNotEmpty)
-              ? extracted.vehicleRegNo!
-              : docToProcess.vehicleRegNo;
+          final String effectiveRegNo = isPhoto
+              ? 'General'
+              : ((extracted.vehicleRegNo != null && extracted.vehicleRegNo!.isNotEmpty)
+                  ? extracted.vehicleRegNo!
+                  : (docToProcess.vehicleRegNo.isNotEmpty ? docToProcess.vehicleRegNo : 'General'));
 
-          final effectivePolicyNo = (extracted.policyNo != null && extracted.policyNo!.isNotEmpty)
-              ? extracted.policyNo!
-              : docToProcess.policyNo;
+          final String? effectivePolicyNo = isPhoto
+              ? null
+              : ((extracted.policyNo != null && extracted.policyNo!.isNotEmpty)
+                  ? extracted.policyNo!
+                  : docToProcess.policyNo);
 
           await (db.update(db.vehicleDocuments)..where((t) => t.id.equals(docToProcess.id))).write(
             VehicleDocumentsCompanion(

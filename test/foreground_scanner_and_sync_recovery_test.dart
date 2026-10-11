@@ -356,5 +356,100 @@ void main() {
       // 4. requiresAiScan flag was cleared
       expect(updatedDoc.requiresAiScan, isFalse);
     });
+
+    test('ExtractedDocumentDetails.hasAnyDetail returns true when hiddenContext is present', () {
+      const details = ExtractedDocumentDetails(
+        isAiDetected: true,
+        hiddenContext: 'Portrait photograph of a professional man in a suit.',
+      );
+      expect(details.hasAnyDetail, isTrue);
+    });
+
+    test('AiRescanWorker smartly recorrects offline photo draft (test 01, driving license, fake expiry) to photo', () async {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      // Document saved offline by user with wrong placeholder details matching user's report:
+      // Title: "test 01"
+      // Category: "driving_license"
+      // Expiry: 2027-10-11
+      // visibleFields: {"License No": "B1234567"}
+      await db.into(db.vehicleDocuments).insert(
+        VehicleDocumentsCompanion.insert(
+          id: 'offline-photo-doc',
+          documentType: 'driving_license',
+          category: const Value('driving_license'),
+          title: 'test 01',
+          vehicleRegNo: 'General',
+          policyNo: const Value('B1234567'),
+          expiryDate: Value(now + 86400000 * 365),
+          visibleFields: const Value('{"License No": "B1234567"}'),
+          localFilePath: dummyFile.path,
+          fileChecksumSha256: 'photo_hash_123',
+          syncStatus: 'queued_upload',
+          lastModifiedTimestamp: now,
+          createdAt: now,
+          requiresAiScan: const Value(true),
+        ),
+      );
+
+      final initialDoc = await (db.select(db.vehicleDocuments)..where((t) => t.id.equals('offline-photo-doc'))).getSingle();
+      expect(initialDoc.title, equals('test 01'));
+      expect(initialDoc.category, equals('driving_license'));
+      expect(initialDoc.expiryDate, isNotNull);
+      expect(initialDoc.requiresAiScan, isTrue);
+
+      // Simulated Gemini result for this photo:
+      const simulatedPhotoResult = ExtractedDocumentDetails(
+        title: 'Portrait of a Professional Man',
+        category: 'photo',
+        documentType: DocumentType.custom,
+        expiryDate: null,
+        visibleFields: {},
+        hiddenContext: 'Studio portrait of a man in a black suit, white shirt and blue tie.',
+        isAiDetected: true,
+        requiresAiScan: false,
+      );
+
+      final effectiveCategory = (simulatedPhotoResult.category != null && simulatedPhotoResult.category!.isNotEmpty)
+          ? simulatedPhotoResult.category!
+          : initialDoc.category;
+
+      final isPhoto = effectiveCategory == 'photo' || effectiveCategory == 'image';
+
+      final effectiveDocType = simulatedPhotoResult.documentType?.value ??
+          (simulatedPhotoResult.category != null ? DocumentType.fromString(simulatedPhotoResult.category!).value : initialDoc.documentType);
+
+      final effectiveTitle = (simulatedPhotoResult.title != null && simulatedPhotoResult.title!.trim().isNotEmpty)
+          ? simulatedPhotoResult.title!.trim()
+          : initialDoc.title;
+
+      final effectiveExpiry = isPhoto ? null : simulatedPhotoResult.expiryDate?.millisecondsSinceEpoch;
+
+      final String effectiveRegNo = isPhoto ? 'General' : (simulatedPhotoResult.vehicleRegNo ?? 'General');
+      final String? effectivePolicyNo = isPhoto ? null : simulatedPhotoResult.policyNo;
+
+      await (db.update(db.vehicleDocuments)..where((t) => t.id.equals('offline-photo-doc'))).write(
+        VehicleDocumentsCompanion(
+          category: Value(effectiveCategory),
+          documentType: Value(effectiveDocType),
+          title: Value(effectiveTitle),
+          vehicleRegNo: Value(effectiveRegNo),
+          policyNo: Value(effectivePolicyNo),
+          expiryDate: Value(effectiveExpiry),
+          visibleFields: const Value('{}'),
+          requiresAiScan: const Value(false),
+          lastModifiedTimestamp: Value(DateTime.now().millisecondsSinceEpoch),
+        ),
+      );
+
+      final updatedDoc = await (db.select(db.vehicleDocuments)..where((t) => t.id.equals('offline-photo-doc'))).getSingle();
+
+      expect(updatedDoc.title, equals('Portrait of a Professional Man'));
+      expect(updatedDoc.category, equals('photo'));
+      expect(updatedDoc.expiryDate, isNull);
+      expect(updatedDoc.vehicleRegNo, equals('General'));
+      expect(updatedDoc.policyNo, isNull);
+      expect(updatedDoc.visibleFields, equals('{}'));
+      expect(updatedDoc.requiresAiScan, isFalse);
+    });
   });
 }

@@ -183,6 +183,11 @@ Whenever modifying the codebase or adding new features:
    - For matching/relevant user titles, enhance them with missing details (e.g. `"Student ID"` -> `"Student Identity Card - University of Colombo"`).
    - Re-correct mismatched categories to the true category.
    - Clear erroneous user expiry dates when documents do not expire (`expiry_date: null`).
+5. **Non-Document / Photograph Visual Fallback with Offline Drafts**:
+   - When an offline-imported image is a photograph without text (such as a portrait, person, animal, item, or scenery), user-entered offline draft metadata (e.g. category `"driving_license"`, title `"test 01"`, dummy expiry dates) must be identified as an offline placeholder/mistake and discarded.
+   - Re-categorize to `"photo"`, generate a descriptive visual title (e.g. `"Portrait of a Professional Man"`), clear `expiry_date` to `null`, set `dynamic_visible_fields` to `[]`, and clear fake vehicle/policy numbers.
+   - `ExtractedDocumentDetails.hasAnyDetail` must recognize `hiddenContext` so pure visual scene descriptions are accepted.
+   - Multimodal photo extractions must utilize at least 45-second SDK timeouts and 90-second outer pipeline timeouts to prevent false retry exhaustion on high-resolution camera uploads.
 
 ---
 

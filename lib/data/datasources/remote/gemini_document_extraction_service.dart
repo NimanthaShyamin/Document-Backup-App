@@ -58,6 +58,7 @@ class ExtractedDocumentDetails {
       (category != null && category!.isNotEmpty) ||
       (vehicleRegNo != null && vehicleRegNo!.isNotEmpty) ||
       (policyNo != null && policyNo!.isNotEmpty) ||
+      (hiddenContext != null && hiddenContext!.isNotEmpty) ||
       expiryDate != null ||
       documentType != null ||
       visibleFields.isNotEmpty;
@@ -282,7 +283,15 @@ The user previously saved this document in offline/draft mode with the following
 \${hasDraftExpiry ? '- User-Entered Draft Expiry Date: "\${userDraftExpiryDate.toIso8601String().split('T').first}"' : ''}
 
 Reconcile these user-entered values against the actual document content:
-- Document Title:
+- Non-Document / Photograph Visual Fallback with User Drafts:
+  * If the image is a regular photograph (such as a portrait of a person, selfie, landscape, animal, item, or general scene) containing no document text:
+    - The user's draft metadata (such as category "driving_license", "vehicle", or title "test 01", "Untitled", or arbitrary expiry dates) was an OFFLINE PLACEHOLDER or MISTAKE.
+    - DISCARD the user draft category and set "category" strictly to "photo".
+    - MUST generate a descriptive visual title for what the photo actually shows (e.g. "Portrait of a Professional Man", "Photo of a Sunset", "Portrait of a Man in Suit", "Photo of a Golden Retriever"). DO NOT leave "title" empty or null!
+    - Set "expiry_date" strictly to null (photographs never expire).
+    - Set "dynamic_visible_fields" to [].
+    - Put a comprehensive visual description of the subjects, clothing, environment, and background in "hidden_context".
+- Document Title (For text/documents):
   * Check whether the user draft title is meaningful and relevant to what the document actually is:
     a) If the user draft title is meaningless, gibberish (e.g. repeated characters like "ttttt", "aaaa", "asdf", random keystrokes), a generic placeholder ("Untitled", "Document", "New Scan", "test"), or completely incompatible/unrelated to what the document actually is:
        Completely DISCARD the user draft title. Recreate a brand new, accurate, professional, and descriptive title based strictly on what the document actually is (e.g. "Student Identity Card", "National Identity Card", "Vehicle Registration Certificate").
@@ -341,8 +350,8 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
             ];
 
             final response = await model.generateContent(content).timeout(
-              const Duration(seconds: 15),
-              onTimeout: () => throw TimeoutException('Gemini AI request timed out after 15 seconds.'),
+              const Duration(seconds: 45),
+              onTimeout: () => throw TimeoutException('Gemini AI request timed out after 45 seconds.'),
             );
             final responseText = response.text;
 
@@ -387,13 +396,12 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
               continue;
             }
 
-            // If this model is experiencing high demand / 503 or timeout, skip to next candidate immediately
+            // If this model is experiencing high demand / 503, skip to next candidate immediately
             final isUnavailable = sdkErrorStr.contains('503') ||
                 sdkErrorStr.contains('UNAVAILABLE') ||
-                sdkErrorStr.contains('high demand') ||
-                sdkErrorStr.contains('timed out');
+                sdkErrorStr.contains('high demand');
             if (isUnavailable) {
-              developer.log('[GeminiExtractionService] Model $modelName is unavailable or timed out. Skipping to next candidate.');
+              developer.log('[GeminiExtractionService] Model $modelName is unavailable. Skipping to next candidate.');
               continue;
             }
 
@@ -427,9 +435,9 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
 
         return ExtractedDocumentDetails.error(lastErrorMsg);
       }).timeout(
-        const Duration(seconds: 40),
+        const Duration(seconds: 90),
         onTimeout: () => ExtractedDocumentDetails.error(
-          'Document analysis timed out after 40 seconds. Please retry.',
+          'Document analysis timed out after 90 seconds. Please retry.',
         ),
       );
     } catch (e, stack) {
@@ -476,7 +484,7 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(payload),
       ).timeout(
-        const Duration(seconds: 15),
+        const Duration(seconds: 45),
         onTimeout: () => throw TimeoutException('Connection to Gemini REST API timed out.'),
       );
 
@@ -549,45 +557,57 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
       if (decoded is! Map<String, dynamic>) return null;
 
       final title = decoded['title'] as String?;
-      final categoryStr = (decoded['category'] ?? decoded['documentType']) as String?;
+      var categoryStr = (decoded['category'] ?? decoded['documentType']) as String?;
       final expiryStr = (decoded['expiry_date'] ?? decoded['expiryDate']) as String?;
       final hiddenCtx = (decoded['hidden_context'] ?? decoded['hiddenContext']) as String?;
       final regNo = decoded['vehicleRegNo'] as String?;
       final policyNo = decoded['policyNo'] as String?;
 
+      // Normalize category representation (e.g. "Photo", "Image", "Photograph" -> "photo")
+      if (categoryStr != null && categoryStr.trim().isNotEmpty) {
+        final catLower = categoryStr.trim().toLowerCase();
+        if (catLower == 'photo' || catLower == 'image' || catLower == 'photograph' || catLower == 'picture') {
+          categoryStr = 'photo';
+        }
+      }
+
+      final isPhoto = categoryStr == 'photo' || categoryStr == 'image';
+
       Map<String, dynamic> visibleFields = {};
 
       // 1. Parse dynamic_visible_fields array: [{"label": "...", "value": "..."}]
       final dynFields = decoded['dynamic_visible_fields'];
-      if (dynFields is List) {
-        for (final item in dynFields) {
-          if (item is Map) {
-            final label = item['label']?.toString().trim();
-            final value = item['value']?.toString().trim();
-            if (label != null && label.isNotEmpty && value != null && value.isNotEmpty) {
-              visibleFields[label] = value;
+      if (!isPhoto) {
+        if (dynFields is List) {
+          for (final item in dynFields) {
+            if (item is Map) {
+              final label = item['label']?.toString().trim();
+              final value = item['value']?.toString().trim();
+              if (label != null && label.isNotEmpty && value != null && value.isNotEmpty) {
+                visibleFields[label] = value;
+              }
             }
           }
+        } else if (decoded['visibleFields'] is Map) {
+          visibleFields = Map<String, dynamic>.from(decoded['visibleFields'] as Map);
+        } else if (dynFields is Map) {
+          visibleFields = Map<String, dynamic>.from(dynFields);
         }
-      } else if (decoded['visibleFields'] is Map) {
-        visibleFields = Map<String, dynamic>.from(decoded['visibleFields'] as Map);
-      } else if (dynFields is Map) {
-        visibleFields = Map<String, dynamic>.from(dynFields);
-      }
 
-      // Preserve legacy vehicle identifiers in visibleFields if present
-      if (regNo != null && regNo.trim().isNotEmpty && regNo != 'null' && !visibleFields.containsKey('vehicleRegNo')) {
-        visibleFields['vehicleRegNo'] = regNo.trim();
-      }
-      if (policyNo != null && policyNo.trim().isNotEmpty && policyNo != 'null' && !visibleFields.containsKey('policyNo')) {
-        visibleFields['policyNo'] = policyNo.trim();
+        // Preserve legacy vehicle identifiers in visibleFields if present
+        if (regNo != null && regNo.trim().isNotEmpty && regNo != 'null' && !visibleFields.containsKey('vehicleRegNo')) {
+          visibleFields['vehicleRegNo'] = regNo.trim();
+        }
+        if (policyNo != null && policyNo.trim().isNotEmpty && policyNo != 'null' && !visibleFields.containsKey('policyNo')) {
+          visibleFields['policyNo'] = policyNo.trim();
+        }
       }
 
       // Automatically search dynamic fields for vehicle reg or policy numbers for backwards compatibility
-      String? effectiveRegNo = (regNo != null && regNo.trim().isNotEmpty && regNo != 'null') ? regNo.trim() : null;
-      String? effectivePolicyNo = (policyNo != null && policyNo.trim().isNotEmpty && policyNo != 'null') ? policyNo.trim() : null;
+      String? effectiveRegNo = (!isPhoto && regNo != null && regNo.trim().isNotEmpty && regNo != 'null') ? regNo.trim() : null;
+      String? effectivePolicyNo = (!isPhoto && policyNo != null && policyNo.trim().isNotEmpty && policyNo != 'null') ? policyNo.trim() : null;
 
-      if (effectiveRegNo == null) {
+      if (!isPhoto && effectiveRegNo == null) {
         for (final entry in visibleFields.entries) {
           final lk = entry.key.toLowerCase();
           if (lk.contains('reg') || lk.contains('plate') || lk.contains('vehicle no')) {
@@ -596,7 +616,7 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
           }
         }
       }
-      if (effectivePolicyNo == null) {
+      if (!isPhoto && effectivePolicyNo == null) {
         for (final entry in visibleFields.entries) {
           final lk = entry.key.toLowerCase();
           if (lk.contains('policy') || lk.contains('insurance no') || lk.contains('pnr')) {
@@ -606,13 +626,27 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
         }
       }
 
+      // Resolve title: if this is a photo and title was omitted by AI, synthesize from hidden context
+      String? effectiveTitle = (title != null && title.trim().isNotEmpty && title != 'null') ? title.trim() : null;
+      if (effectiveTitle == null && (isPhoto || (categoryStr == null && hiddenCtx != null && hiddenCtx.trim().isNotEmpty))) {
+        if (hiddenCtx != null && hiddenCtx.trim().isNotEmpty && hiddenCtx != 'null') {
+          final firstSentence = hiddenCtx.split(RegExp(r'[\.\n]')).first.trim();
+          effectiveTitle = (firstSentence.isNotEmpty && firstSentence.length <= 60)
+              ? firstSentence
+              : 'Photograph';
+        } else {
+          effectiveTitle = 'Photograph';
+        }
+        categoryStr ??= 'photo';
+      }
+
       DocumentType? docType;
       if (categoryStr != null && categoryStr.isNotEmpty) {
         docType = DocumentType.fromString(categoryStr);
       }
 
       DateTime? expiryDate;
-      if (expiryStr != null && expiryStr.isNotEmpty) {
+      if (!isPhoto && expiryStr != null && expiryStr.isNotEmpty) {
         try {
           expiryDate = DateTime.parse(expiryStr);
         } catch (_) {}
@@ -620,7 +654,7 @@ Return ONLY a valid JSON object without markdown fences, following this exact sc
 
       final details = ExtractedDocumentDetails(
         vehicleRegNo: effectiveRegNo,
-        title: (title != null && title.trim().isNotEmpty && title != 'null') ? title.trim() : null,
+        title: effectiveTitle,
         documentType: docType,
         category: categoryStr,
         policyNo: effectivePolicyNo,

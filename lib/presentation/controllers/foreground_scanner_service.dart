@@ -540,16 +540,22 @@ class ForegroundScannerNotifier extends StateNotifier<ForegroundScanState> {
             ? DateTime.fromMillisecondsSinceEpoch(docData.expiryDate!)
             : null,
       ).timeout(
-        const Duration(seconds: 45),
-        onTimeout: () => ExtractedDocumentDetails.error('Scan timed out after 45 seconds.'),
+        const Duration(seconds: 90),
+        onTimeout: () => ExtractedDocumentDetails.error('Scan timed out after 90 seconds.'),
       );
 
       if (extracted.isAiDetected) {
         developer.log('[ForegroundScanner] AI Scan successful for ${docData.id}. Updating database.');
         _scanAttempts.remove(docData.id);
 
+        final effectiveCategory = (extracted.category != null && extracted.category!.isNotEmpty)
+            ? extracted.category!
+            : docData.category;
+
+        final isPhoto = effectiveCategory == 'photo' || effectiveCategory == 'image';
+
         Map<String, dynamic> mergedVisible = {};
-        if (docData.visibleFields.isNotEmpty) {
+        if (!isPhoto && docData.visibleFields.isNotEmpty) {
           try {
             mergedVisible = jsonDecode(docData.visibleFields) as Map<String, dynamic>;
           } catch (_) {}
@@ -557,10 +563,6 @@ class ForegroundScannerNotifier extends StateNotifier<ForegroundScanState> {
         if (extracted.visibleFields.isNotEmpty) {
           mergedVisible.addAll(extracted.visibleFields);
         }
-
-        final effectiveCategory = (extracted.category != null && extracted.category!.isNotEmpty)
-            ? extracted.category!
-            : docData.category;
 
         final effectiveDocType = extracted.documentType?.value ??
             (extracted.category != null ? DocumentType.fromString(extracted.category!).value : docData.documentType);
@@ -572,19 +574,23 @@ class ForegroundScannerNotifier extends StateNotifier<ForegroundScanState> {
         // When AI successfully detects the document, use AI-verified expiry date.
         // If the document has no expiration (e.g. Student ID, birth certificate, photo),
         // extracted.expiryDate is null, which properly clears any user-entered erroneous expiry date.
-        final effectiveExpiry = extracted.expiryDate?.millisecondsSinceEpoch;
+        final effectiveExpiry = isPhoto ? null : extracted.expiryDate?.millisecondsSinceEpoch;
 
         final effectiveHidden = (extracted.hiddenContext != null && extracted.hiddenContext!.isNotEmpty)
             ? extracted.hiddenContext
             : docData.hiddenContext;
 
-        final effectiveRegNo = (extracted.vehicleRegNo != null && extracted.vehicleRegNo!.isNotEmpty)
-            ? extracted.vehicleRegNo!
-            : docData.vehicleRegNo;
+        final String effectiveRegNo = isPhoto
+            ? 'General'
+            : ((extracted.vehicleRegNo != null && extracted.vehicleRegNo!.isNotEmpty)
+                ? extracted.vehicleRegNo!
+                : (docData.vehicleRegNo.isNotEmpty ? docData.vehicleRegNo : 'General'));
 
-        final effectivePolicyNo = (extracted.policyNo != null && extracted.policyNo!.isNotEmpty)
-            ? extracted.policyNo!
-            : docData.policyNo;
+        final String? effectivePolicyNo = isPhoto
+            ? null
+            : ((extracted.policyNo != null && extracted.policyNo!.isNotEmpty)
+                ? extracted.policyNo!
+                : docData.policyNo);
 
         await (db.update(db.vehicleDocuments)..where((t) => t.id.equals(docData.id))).write(
           VehicleDocumentsCompanion(
