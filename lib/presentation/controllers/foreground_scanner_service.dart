@@ -63,27 +63,20 @@ class ForegroundScanState {
     if (!isOnline || status == ScanStatus.offline || status == ScanStatus.waitingBackup) return null;
     if (isScanning(docId)) return 0;
 
-    int index = pendingQueueIds.indexOf(docId);
-    if (index == -1) {
-      if (activeDocumentId == docId && status == ScanStatus.waitingRateLimit) {
-        index = 0;
-      } else {
-        return null;
+    // While ANY document is actively scanning, all other documents remain dormant without timers
+    if (status == ScanStatus.scanning) return null;
+
+    // When the previous AI scan is over and the rate-limit cooldown begins:
+    // Only the NEXT document in line displays the 1-minute (60s) countdown
+    if (status == ScanStatus.waitingRateLimit) {
+      final nextDocId = activeDocumentId ?? (pendingQueueIds.isNotEmpty ? pendingQueueIds.first : null);
+      if (docId == nextDocId) {
+        return baseSecondsRemaining;
       }
+      return null;
     }
 
-    if (status == ScanStatus.scanning) {
-      // 1st document is scanning with no timer.
-      // 2nd document (index 0 of remaining) is counting down from baseSecondsRemaining (60s).
-      // Deep queue documents add 60s per position in imported sequence.
-      return baseSecondsRemaining + (index * 60);
-    } else if (status == ScanStatus.waitingRateLimit) {
-      return baseSecondsRemaining + (index * 60);
-    } else {
-      // Idle / ready to start:
-      // index 0 -> 0s, index 1 -> 60s, index k -> k * 60s
-      return index * 60;
-    }
+    return null;
   }
 
   ForegroundScanState copyWith({
@@ -466,19 +459,14 @@ class ForegroundScannerNotifier extends StateNotifier<ForegroundScanState> {
             .map((d) => d.id)
             .toList();
 
-        // 1st Document scans with NO TIMER (0s delay).
-        // 2nd document (and deep queue) starts its 60s countdown timer NOW.
-        if (remainingIds.isNotEmpty) {
-          _startTickingTimer(60);
-        } else {
-          _stopGlobalTimer();
-          _currentBaseRemaining = 0;
-        }
+        // Actively scanning: NO timer runs during scan!
+        _stopGlobalTimer();
+        _currentBaseRemaining = 0;
 
         state = state.copyWith(
           status: ScanStatus.scanning,
           activeDocumentId: docToProcess.id,
-          baseSecondsRemaining: remainingIds.isNotEmpty ? _currentBaseRemaining : 0,
+          baseSecondsRemaining: 0,
           pendingQueueIds: remainingIds,
         );
 
@@ -492,12 +480,21 @@ class ForegroundScannerNotifier extends StateNotifier<ForegroundScanState> {
         // If app went offline during scan, break out cleanly
         if (!state.isOnline) break;
 
-        // If there are more documents in queue, wait for the 60s cooldown timer to finish ticking
-        if (remainingIds.isNotEmpty && _currentBaseRemaining > 0) {
+        // Scan for current document is now OVER!
+        // The next document in line begins its 1-minute (60s) rate limit cooldown timer now.
+        if (remainingIds.isNotEmpty) {
+          final nextDocId = remainingIds.first;
+          developer.log('[ForegroundScanner] Previous AI scan is over. Starting 60s cooldown for next document: $nextDocId');
+
           state = state.copyWith(
             status: ScanStatus.waitingRateLimit,
-            activeDocumentId: null,
+            activeDocumentId: nextDocId,
+            baseSecondsRemaining: 60,
+            pendingQueueIds: remainingIds,
           );
+
+          _startTickingTimer(60);
+
           if (_cooldownCompleter != null && !_cooldownCompleter!.isCompleted) {
             await _cooldownCompleter!.future;
           }

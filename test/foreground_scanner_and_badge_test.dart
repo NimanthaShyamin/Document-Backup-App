@@ -100,27 +100,23 @@ void main() {
       expect(find.text('Cannot scan while offline. Connect to the internet to scan.'), findsOneWidget);
     });
 
-    testWidgets('Online Sequence: 1st doc scans with NO timer (0s), 2nd doc starts 60s timer, others delay + 60s', (tester) async {
-      // 1st document ('doc_1') is actively scanning.
-      // 2nd document ('doc_2') has 60s timer.
-      // 3rd document ('doc_3') has 120s timer (60 + 60).
-      // 4th document ('doc_4') has 180s timer (60 + 120).
+    testWidgets('Online Sequence: 1st doc scans with NO timer (0s), others remain dormant without timer during scan', (tester) async {
+      // 1st document ('doc_1') is actively scanning with no timer.
+      // 2nd, 3rd, 4th documents do NOT have active timers while 1st doc is scanning.
       const onlineScanningState = ForegroundScanState(
         status: ScanStatus.scanning,
         isOnline: true,
         activeDocumentId: 'doc_1',
-        baseSecondsRemaining: 60,
+        baseSecondsRemaining: 0,
         pendingQueueIds: ['doc_2', 'doc_3', 'doc_4'],
       );
 
       // Doc 1 (active): 0s wait
       expect(onlineScanningState.getWaitSecondsFor('doc_1'), 0);
-      // Doc 2 (2nd in line): 60s
-      expect(onlineScanningState.getWaitSecondsFor('doc_2'), 60);
-      // Doc 3 (3rd in line): 120s
-      expect(onlineScanningState.getWaitSecondsFor('doc_3'), 120);
-      // Doc 4 (4th in line): 180s
-      expect(onlineScanningState.getWaitSecondsFor('doc_4'), 180);
+      // Doc 2, 3, 4: no countdown timer runs while 1st doc is scanning
+      expect(onlineScanningState.getWaitSecondsFor('doc_2'), isNull);
+      expect(onlineScanningState.getWaitSecondsFor('doc_3'), isNull);
+      expect(onlineScanningState.getWaitSecondsFor('doc_4'), isNull);
 
       await tester.pumpWidget(
         ProviderScope(
@@ -145,12 +141,8 @@ void main() {
 
       // 1st document renders active scanning with progress indicators
       expect(find.text('Scanning Document...'), findsOneWidget);
-      // 2nd document renders 60s timer
-      expect(find.text('Pending Scan (in 60s)'), findsOneWidget);
-      // 3rd document renders 120s timer
-      expect(find.text('Pending Scan (in 120s)'), findsOneWidget);
-      // 4th document renders 180s timer
-      expect(find.text('Pending Scan (in 180s)'), findsOneWidget);
+      // Other queued documents render Pending AI Scan without countdown numbers
+      expect(find.text('Pending AI Scan'), findsNWidgets(3));
     });
 
     testWidgets('Renders countdown timer and Scan Now button for Document 2 (next in line)', (tester) async {
@@ -184,32 +176,39 @@ void main() {
       expect(find.byType(LinearProgressIndicator), findsNothing);
     });
 
-    testWidgets('Calculates wait time for Document 3+ (Deep Queue) by adding 60s per position', (tester) async {
+    testWidgets('When previous scan finishes: only next doc in line displays 60s cooldown timer', (tester) async {
+      const rateLimitState = ForegroundScanState(
+        status: ScanStatus.waitingRateLimit,
+        activeDocumentId: 'doc_2',
+        baseSecondsRemaining: 55,
+        pendingQueueIds: ['doc_2', 'doc_3', 'doc_4'],
+      );
+
+      // Next in line: 55s
+      expect(rateLimitState.getWaitSecondsFor('doc_2'), 55);
+      // Deep queue documents: wait in queue without ticking timers
+      expect(rateLimitState.getWaitSecondsFor('doc_3'), isNull);
+      expect(rateLimitState.getWaitSecondsFor('doc_4'), isNull);
+
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            foregroundScanStateProvider.overrideWithValue(
-              const ForegroundScanState(
-                status: ScanStatus.waitingRateLimit,
-                baseSecondsRemaining: 55,
-                pendingQueueIds: ['doc_2', 'doc_3', 'doc_4'],
-              ),
-            ),
+            foregroundScanStateProvider.overrideWithValue(rateLimitState),
           ],
           child: const MaterialApp(
             home: Scaffold(
               body: Column(
                 children: [
                   PendingAiScanBadge(
-                    documentId: 'doc_2', // index 0: 55s
+                    documentId: 'doc_2', // next in line: 55s
                     isDark: true,
                   ),
                   PendingAiScanBadge(
-                    documentId: 'doc_3', // index 1: 55 + 60 = 115s
+                    documentId: 'doc_3', // in queue
                     isDark: true,
                   ),
                   PendingAiScanBadge(
-                    documentId: 'doc_4', // index 2: 55 + 120 = 175s
+                    documentId: 'doc_4', // in queue
                     isDark: true,
                   ),
                 ],
@@ -221,8 +220,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Pending Scan (in 55s)'), findsOneWidget);
-      expect(find.text('Pending Scan (in 115s)'), findsOneWidget);
-      expect(find.text('Pending Scan (in 175s)'), findsOneWidget);
+      expect(find.text('Pending AI Scan'), findsNWidgets(2));
       expect(find.text('Scan Now'), findsNWidgets(3));
     });
 

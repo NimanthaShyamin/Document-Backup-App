@@ -74,9 +74,10 @@ Registering tasks with dynamic names (e.g. `ai_rescan_${DateTime.now()}`) floods
    - Use `existingWorkPolicy: ExistingWorkPolicy.keep` to prevent duplicate task registrations.
    - `executeWorker()` processes **strictly ONE document** per run, then schedules the next run with a 60-second delay if more documents remain pending.
 2. In `lib/presentation/controllers/foreground_scanner_service.dart`:
-   - 1st imported document scans with 0s delay.
-   - 2nd document starts a 60-second rate-limit countdown.
-   - Subsequent documents calculate delay as `baseSecondsRemaining + (index * 60)`.
+   - 1st imported document scans with 0s delay after cloud backup finishes.
+   - While ANY document is actively scanning, all timers are stopped (`baseSecondsRemaining = 0`) and waiting documents remain dormant without timers (`getWaitSecondsFor` returns null).
+   - ONLY when the previous document's AI scan is OVER, the 60-second rate-limit cooldown begins for the next document in line (Document 2).
+   - Subsequent queued documents wait in queue without simultaneous multi-minute timers, starting their 60s cooldown strictly after the preceding document's scan finishes.
    - When offline, all countdown timers stop immediately and resume only when back online and cloud backup is complete.
 
 ---
