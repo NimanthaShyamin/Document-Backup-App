@@ -168,7 +168,7 @@ class GeminiDocumentExtractionService {
 
       const prompt = '''
 You are an advanced, universal AI document analyzer and vision perception engine.
-Analyze this document (which can be an invoice, ID card, driving license, vehicle document, ticket, bill, certificate, receipt, or any other document) and extract structured metadata:
+Analyze this image or document (which can be an invoice, ID card, driving license, vehicle document, ticket, bill, certificate, receipt, warranty card, general photograph, or any other visual media) and extract structured metadata:
 
 1. "category": Intelligently decide the category. Prioritize matching one of these standard preset IDs if appropriate:
    - "id_card" (National ID, Passport, Residence Permit)
@@ -180,12 +180,20 @@ Analyze this document (which can be an invoice, ID card, driving license, vehicl
    - "insurance_card" (Health, Motor, Life Insurance Policy)
    - "revenue_license" (Vehicle Revenue License, Road Tax)
    - "fuel_qr" (Fuel Pass QR Code)
+   - "photo" or "image" (Non-document photos, landscapes, people, objects, general photography)
    - "general" (Any other personal or legal document)
    If none fit, provide a concise, clean lowercase snake_case category name.
 
-2. "title": A descriptive, clean, official title for the document (e.g. "National Identity Card", "Comprehensive Motor Insurance", "Electricity Utility Bill", "Sri Lanka Driving License", "Qatar Airways Flight Ticket").
+2. "title": A descriptive, clean, official title for the document or image:
+   - For documents: Official title (e.g. "National Identity Card", "Comprehensive Motor Insurance", "Laptop Purchase Invoice & Warranty", "Electricity Utility Bill", "Sri Lanka Driving License", "Qatar Airways Flight Ticket").
+   - For non-document photos (visual fallback): Describe what you see in a brief descriptive topic (e.g. "Photo of a Sunset", "Portrait of a Man", "Golden Retriever Dog").
 
-3. "expiry_date": The expiry date, valid-until date, travel date, or payment due date formatted strictly as "YYYY-MM-DD" (or null if the document does not expire).
+3. "expiry_date": The true expiry date, valid-until date, travel date, or payment due date formatted strictly as "YYYY-MM-DD" (or null if the document does not expire or is a general photo).
+   IMPORTANT - Contextual Date Arithmetic & Warranty Calculations:
+   - When warranties or validity durations are present on an invoice or purchase receipt, DO NOT blindly copy an invoice "Due Date" or invoice date as the expiry date!
+   - Perform date arithmetic: Calculate the actual warranty expiration date by adding the warranty duration (in days, months, or years) to the purchase/invoice date.
+     Example: An invoice with Date "15/03/2026" and items having "365 DAYS WARRANTY" has an expiry date of 2027-03-15 (15/03/2026 + 365 days). This must become the primary "expiry_date".
+   - If secondary warranties exist (e.g. "1050 DAYS SERVICE WARRANTY"): Calculate that date (e.g. 15/03/2026 + 1050 days = 2029-01-28) and record it clearly inside "dynamic_visible_fields" as {"label": "Service Warranty Expiry", "value": "2029-01-28"} (or "28/01/2029") so the user can easily reference it.
 
 4. "dynamic_visible_fields": A JSON array of the 3 to 5 most critical, user-facing details that the user would want to quickly reference on their screen.
    Format as:
@@ -194,9 +202,29 @@ Analyze this document (which can be an invoice, ID card, driving license, vehicl
      {"label": "Policy / Ref No", "value": "..."},
      {"label": "Holder Name", "value": "..."}
    ]
-   (If vehicle document, include Registration No and Policy No. If bill, include Account No or Due Amount. If ID, include ID Number. If ticket, include PNR/Booking Ref.)
+   Guidelines:
+   - If vehicle document: Include Registration No, Make/Model, Engine/Chassis No, Policy No.
+   - If Sri Lankan vehicle document: Standardize Sri Lankan vehicle registration numbers. Recognize 2-letter province prefixes (WP, SP, NP, CP, EP, NW, NC, SG, UP). Extract the core vehicle number cleanly (e.g. "CAB-1234") and note the province separately, or format as {"label": "Registration No", "value": "CAB-1234"}, {"label": "Province", "value": "WP (Western Province)"} so that searches and context identify the core number independently of the province prefix.
+   - If invoice / warranty: Include Purchase Date, Total Amount, Product / Serial No, and secondary calculated warranty expirations (e.g. {"label": "Service Warranty Expiry", "value": "28/01/2029"}).
+   - If bill: Include Account No, Due Date, or Due Amount.
+   - If ID card / passport: Include ID Number, Full Name, Date of Birth.
+   - If e-ticket: Include PNR/Booking Ref, Flight/Train No, Departure Date.
+   - If general photo / non-document: Keep dynamic_visible_fields minimal or empty [].
 
-5. "hidden_context": Crucially, extract EVERYTHING else visible in the document to power deep AI semantic search and chat queries. Include all secondary names, addresses, serial numbers, VIN, engine numbers, transaction IDs, tax IDs, MAC addresses, warranty clauses, shop details, fine print, and timestamps. Dump this into a single, raw context string.
+5. "hidden_context": Crucially, extract EVERYTHING visible in the document to power deep AI semantic search and chat queries.
+   - Include all secondary names, addresses, serial numbers, VIN, engine numbers, transaction IDs, tax IDs, MAC addresses, warranty clauses, shop details, fine print, and timestamps.
+   - For Sri Lankan vehicle numbers: Always include BOTH the standalone core registration number (e.g. "CAB-1234") AND the full province-prefixed variations (e.g. "WP CAB-1234", "WP-CAB-1234", "Western Province CAB-1234") so semantic searches match regardless of user input.
+   - For non-document photos: Provide a rich visual description of the scene, subjects, objects, colors, environment, and setting.
+   Dump this into a single, raw context string.
+
+6. Visual Fallback for Non-Documents (General Photos):
+   - If the image is a regular photograph (e.g. a landscape, pet, person, item) that contains little or no text:
+     - DO NOT fail or return empty/null metadata!
+     - Analyze the visual content: categorize as "Photo" or "Image".
+     - Set the "title" to a brief descriptive topic (e.g. "Photo of a Sunset", "Portrait of a Man").
+     - Leave "expiry_date" as null.
+     - Keep "dynamic_visible_fields" minimal or empty [].
+     - Describe what you see in "hidden_context".
 
 Return ONLY a valid JSON object without markdown fences, following this exact schema:
 {
